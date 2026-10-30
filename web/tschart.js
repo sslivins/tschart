@@ -2038,10 +2038,13 @@ class TsBars {
                 if (cx - lastX < minGap * 0.7) continue;
                 lastX = cx;
             }
-            // The newest label is end-anchored when it would run off the right edge.
-            const edge = i === newest && cx + measure(text) / 2 > W - 2;
-            const out = j < 0 || j >= g.n;
-            const t = s('text', { x: edge ? W - 2 : cx, y: plot.y2 + 18, 'text-anchor': edge ? 'end' : 'middle',
+            // Labels that would be clipped at either end are anchored to it:
+            // the newest at the right edge, any in view at the plot's left.
+            const half = measure(text) / 2, out = j < 0 || j >= g.n;
+            const edge = i === newest && cx + half > W - 2;
+            const start = !edge && !out && cx - half < plot.x1 - 4;
+            const t = s('text', { x: edge ? W - 2 : start ? plot.x1 - 4 : cx, y: plot.y2 + 18,
+                                  'text-anchor': edge ? 'end' : start ? 'start' : 'middle',
                                   class: 'tsbars-label' + (b.accent ? ' accent' : '') + (out ? ' tsbars-label-out' : ''),
                                   'data-key': b.key }, this.labelG);
             t.textContent = text;
