@@ -47,8 +47,12 @@ const lv_font_t *main_font(lv_obj_t *c) {
     return lv_obj_get_style_text_font(c, LV_PART_MAIN);
 }
 
+}  // namespace
+
+// ---- Primitives (shared with tsbars) -------------------------------------------
+
 void line(lv_layer_t *layer, int32_t x1, int32_t y1, int32_t x2, int32_t y2,
-          lv_color_t color, int32_t width, lv_opa_t opa = LV_OPA_COVER) {
+          lv_color_t color, int32_t width, lv_opa_t opa) {
     lv_draw_line_dsc_t dsc;
     lv_draw_line_dsc_init(&dsc);
     dsc.color = color;
@@ -64,7 +68,7 @@ void line(lv_layer_t *layer, int32_t x1, int32_t y1, int32_t x2, int32_t y2,
 }
 
 void rect(lv_layer_t *layer, const lv_area_t &a, lv_color_t color, lv_opa_t opa,
-          int32_t radius = 0) {
+          int32_t radius) {
     lv_draw_rect_dsc_t dsc;
     lv_draw_rect_dsc_init(&dsc);
     dsc.bg_color = color;
@@ -123,6 +127,8 @@ void hatch(lv_layer_t *layer, int32_t x1, int32_t x2, int32_t y1, int32_t y2,
         lv_draw_line(layer, &dsc);
     }
 }
+
+namespace {
 
 // Fault period: a solid line where it starts (visible however short), plus
 // hatching once it's wide enough to show.

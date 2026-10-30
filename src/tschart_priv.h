@@ -240,6 +240,18 @@ void refresh_key_swatches(lv_obj_t *c);
 lv_color_t col_grid(lv_obj_t *c);
 lv_color_t col_text(lv_obj_t *c);
 lv_color_t col_dim();
+
+// Draw primitives (tschart_draw.cpp).
+void line(lv_layer_t *layer, int32_t x1, int32_t y1, int32_t x2, int32_t y2,
+          lv_color_t color, int32_t width, lv_opa_t opa = LV_OPA_COVER);
+void rect(lv_layer_t *layer, const lv_area_t &a, lv_color_t color, lv_opa_t opa,
+          int32_t radius = 0);
+void text(lv_layer_t *layer, const lv_area_t &a, const char *s, lv_color_t color,
+          lv_text_align_t align, const lv_font_t *font);
+int32_t text_w(const char *s, const lv_font_t *font);
+// Diagonal lines x + y = c inside [x1, x2] x [y1, y2], phase anchored at c0.
+void hatch(lv_layer_t *layer, int32_t x1, int32_t x2, int32_t y1, int32_t y2,
+           int32_t c0, lv_color_t color, lv_opa_t opa);
 size_t fmt_value(const tschart_pane &p, int32_t v, tschart_fmt_ctx_t ctx,
                  char *buf, size_t cap);
 

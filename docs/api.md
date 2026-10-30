@@ -106,6 +106,66 @@ Colours come from CSS variables, so a host theme can restyle the chart:
 `color-mix()` keyed fills fall back to translucency. Test hooks are `data-tschart-chip|pill|tag|edge|card|status`
 attributes, plus `data-layer` on series groups.
 
+## Bucket charts (TsBars / tsbars)
+
+`TsBars` (web, `TsChart.Bars`) and `tsbars` (C, `include/tsbars.h`) chart
+ordinal buckets such as days or months. Every bucket gets an equal slot, so
+calendar quirks (DST, month lengths) never shift a bar. They share the pane
+range model, value formatters, status overlay and colours with tschart.
+
+- **Buckets** are oldest first, one per slot, empty ones included. Each has
+  a unique ascending `key`, the host's `data` and flags: *accent* (label in
+  the accent colour, e.g. today), *provisional* (still filling up: bars are
+  drawn with diagonal stripes) and *selectable*.
+- **Panes** stack vertically, each with its own y scale and a unit at the
+  top or in the gutter middle. Tick labels can be `all` or `ends` only. The
+  axes fit the buckets in view, so they hold still during a drag.
+- **Series** are `bar` (stacked by a shared `stack` id, in series order) or
+  `line` (through slot centres, broken at missing values, optional dots).
+- **View**: `count` buckets are in view. A sideways drag pans by whole
+  buckets with the neighbours already drawn, rubber-bands at the loaded
+  ends or the host's pan limits, and emits *view* with the step count once
+  it settles. The host reloads around the new view and calls `setBuckets`
+  again keeping it.
+- **Selection**: a tap on a selectable bucket selects it (outline or fill)
+  and emits *select*.
+
+```js
+const bars = new TsBars(element, {
+  id: 'energy', count: 14, barWidth: 0.62, barMaxPx: 32,
+  selectStyle: 'outline'|'fill',
+  labels: { text: (b, i) => '…', mode: 'every'|'sparse', minGap: 28 },
+  metrics: { /* gutter, right, top, labelH, paneGap, tickMinPx */ },
+});
+const kwh = bars.addPane({ id, weight, minHeight, unit, unitAt: 'top'|'middle', unitColor,
+  range: { /* as TsChart */ }, maxTicks, tickLabels: 'all'|'ends', fmt, emptyText });
+bars.addSeries(kwh, { id, name, color, value: b => number|null,
+  geom: 'bar'|'line', stack, width, opacity, pointRadius });
+bars.setBuckets([{ key, data, label, accent, provisional, selectable }],
+                { first } | { firstKey } | { lastKey } | { last: true });   // default: keep
+bars.setView(first); bars.getView();      // {first, count, firstKey, lastKey}
+bars.setCount(n); bars.setPanLimits(back, forward);
+bars.setSelected(key); bars.setCard((b, card) => card.add(kind, label, value, color));
+bars.setStatus(st, text); bars.getPlotArea(); bars.flush(); bars.destroy();
+```
+
+| event | `detail` |
+|---|---|
+| `tsbars:select` | `{key, index, bucket}` |
+| `tsbars:view` | `{steps, first, count, firstKey, lastKey}` |
+
+Test hooks: `data-tsbars` on the root, `.tsbars-bar[data-key]` (plus
+`.provisional`), `.tsbars-hit[data-key]`, `.tsbars-label` (plus `.accent`),
+`.tsbars-sel`, and `.panning` on the root during a drag.
+
+The C API mirrors it: `tsbars_add_pane()` / `tsbars_add_series()` with
+value callbacks, `tsbars_set_labels()` with a label callback and a minimum
+gap, `tsbars_set_buckets(..., TSBARS_VIEW_KEEP|FIRST_KEY|LAST_KEY|NEWEST,
+key)` (the array is copied, each bucket's `data` borrowed), and the events
+`TSBARS_EVENT_SELECT` (`tsbars_select_t`) and `TSBARS_EVENT_VIEW_CHANGED`
+(`tsbars_view_changed_t`). The web card has no LVGL counterpart; hosts show
+a selected bucket's detail themselves.
+
 ## C API vs. the design sketch
 
 The shipped `tschart.h` differs from [design.md](design.md) in these ways:

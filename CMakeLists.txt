@@ -1,6 +1,6 @@
 if(ESP_PLATFORM)
     idf_component_register(
-        SRCS "src/tschart.cpp" "src/tschart_draw.cpp" "src/tschart_logic.cpp"
+        SRCS "src/tschart.cpp" "src/tschart_draw.cpp" "src/tschart_logic.cpp" "src/tsbars.cpp"
         INCLUDE_DIRS "include"
         PRIV_INCLUDE_DIRS "src"
         REQUIRES lvgl
