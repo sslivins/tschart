@@ -1121,7 +1121,7 @@ void tschart_key_set_fill_strength(lv_obj_t *c, const char *id, lv_opa_t strengt
     }
 }
 
-void refresh_key_swatches(lv_obj_t *c) {
+void tschart::refresh_key_swatches(lv_obj_t *c) {
     Impl *d = D(c);
     for (uint8_t i = 0; i < d->nkeys; i++) {
         const Key &k = d->keys[i];
