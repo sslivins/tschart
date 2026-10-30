@@ -147,4 +147,20 @@ int32_t nearest_time(const uint32_t* t, size_t n, uint32_t at, uint32_t max_dt);
 // number of groups.
 size_t group_notes(const int32_t* xs, size_t n, int32_t label_w, size_t* group);
 
+// ---- Bucket (bar) charts ----------------------------------------------------
+// Equal slots across the plot, slot 0 = the first bucket in view.
+
+// Left edge of slot i; i may be negative or >= count (off-screen buckets).
+int32_t slot_x(int32_t x1, int32_t width, int32_t count, int32_t i);
+// Slot under x (outside [0, count) when x is outside the plot); -1 if empty.
+int32_t slot_at(int32_t x, int32_t x1, int32_t width, int32_t count);
+// Bar inside slot [x1, x2): permille of the slot, at most max_px (0 = no
+// cap), at least 1 px, centred.
+void bar_extent(int32_t x1, int32_t x2, int32_t permille, int32_t max_px,
+                int32_t* bx1, int32_t* bx2);
+// Label every Nth slot so labels sit at least min_gap px apart.
+int32_t label_every(int32_t width, int32_t count, int32_t min_gap);
+// Whole slots a drag of dx px moves the view (positive = later buckets).
+int32_t pan_steps(int32_t dx, int32_t width, int32_t count);
+
 }  // namespace tschart

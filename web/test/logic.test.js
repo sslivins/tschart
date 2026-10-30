@@ -172,3 +172,34 @@ test('key fill strength', () => {
     assert.deepEqual(L.keyFill({ color: '#f97316', fillStrength: null }),
                      { color: '#f97316', opacity: 1 });
 });
+
+test('bucket slots', () => {
+    assert.equal(L.slotX(10, 700, 14, 0), 10);
+    assert.equal(L.slotX(10, 700, 14, 1), 60);
+    assert.equal(L.slotX(10, 700, 14, 3), 160);
+    assert.equal(L.slotX(10, 700, 14, -1), -40);
+    assert.equal(L.slotX(10, 701, 14, 1), 60);
+    assert.equal(L.slotX(10, 701, 14, -1), -41);
+    assert.equal(L.slotAt(10, 10, 700, 14), 0);
+    assert.equal(L.slotAt(59, 10, 700, 14), 0);
+    assert.equal(L.slotAt(60, 10, 700, 14), 1);
+    assert.equal(L.slotAt(9, 10, 700, 14), -1);
+    assert.equal(L.slotAt(709, 10, 700, 14), 13);
+    assert.equal(L.slotAt(710, 10, 700, 14), 14);
+    assert.deepEqual(L.barExtent(0, 50, 620, 32), { x1: 9, x2: 40 });
+    assert.deepEqual(L.barExtent(0, 100, 620, 32), { x1: 34, x2: 66 });
+    assert.deepEqual(L.barExtent(0, 1, 620, 0), { x1: 0, x2: 1 });
+});
+
+test('bucket labels and pan', () => {
+    assert.equal(L.labelEvery(700, 14, 64), 2);
+    assert.equal(L.labelEvery(700, 30, 64), 3);
+    assert.equal(L.labelEvery(700, 365, 64), 34);
+    assert.equal(L.labelEvery(0, 14, 64), 1);
+    assert.equal(L.panSteps(0, 700, 14), 0);
+    assert.equal(L.panSteps(-24, 700, 14), 0);
+    assert.equal(L.panSteps(-25, 700, 14), 1);
+    assert.equal(L.panSteps(-26, 700, 14), 1);
+    assert.equal(L.panSteps(74, 700, 14), -1);
+    assert.equal(L.panSteps(75, 700, 14), -2);
+});

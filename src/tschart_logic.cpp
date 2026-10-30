@@ -392,4 +392,40 @@ size_t group_notes(const int32_t* xs, size_t n, int32_t label_w, size_t* group) 
     return count;
 }
 
+
+// ---- Bucket (bar) charts ----------------------------------------------------
+
+int32_t slot_x(int32_t x1, int32_t width, int32_t count, int32_t i) {
+    if (count <= 0) return x1;
+    const int64_t n = (int64_t)width * i;
+    return x1 + (int32_t)(n >= 0 ? n / count : -((-n + count - 1) / count));
+}
+
+int32_t slot_at(int32_t x, int32_t x1, int32_t width, int32_t count) {
+    if (count <= 0 || width <= 0) return -1;
+    const int64_t n = (int64_t)(x - x1) * count;
+    return (int32_t)(n >= 0 ? n / width : -((-n + width - 1) / width));
+}
+
+void bar_extent(int32_t x1, int32_t x2, int32_t permille, int32_t max_px,
+                int32_t* bx1, int32_t* bx2) {
+    int32_t w = (int32_t)((int64_t)(x2 - x1) * permille / 1000);
+    if (max_px > 0 && w > max_px) w = max_px;
+    if (w < 1) w = 1;
+    *bx1 = x1 + (x2 - x1 - w) / 2;
+    *bx2 = *bx1 + w;
+}
+
+int32_t label_every(int32_t width, int32_t count, int32_t min_gap) {
+    if (count <= 0 || width <= 0) return 1;
+    const int64_t e = ((int64_t)min_gap * count + width - 1) / width;
+    return e < 1 ? 1 : (int32_t)e;
+}
+
+int32_t pan_steps(int32_t dx, int32_t width, int32_t count) {
+    if (count <= 0 || width <= 0) return 0;
+    const int64_t n = -(int64_t)dx * count;
+    return (int32_t)(n >= 0 ? (n + width / 2) / width : -((-n + width / 2) / width));
+}
+
 }  // namespace tschart

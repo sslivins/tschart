@@ -9,12 +9,15 @@
          font: 14px system-ui, sans-serif; }
   #chart { height: 420px; max-width: 900px; padding: 12px; border-radius: 12px;
            background: #181828; }
+  #bars { height: 360px; max-width: 900px; padding: 12px; border-radius: 12px;
+          background: #181828; margin-top: 16px; }
   #log { margin-top: 8px; color: #8a8a9a; font-size: 12px; }
 </style>
 </head>
 <body>
 <div id="chart"></div>
 <div id="log"></div>
+<div id="bars"></div>
 <script src="tschart.js"></script>
 <script>
 // Synthetic heat-pump history: 30 s samples, deci-degrees and watts, served
@@ -107,6 +110,44 @@ root.addEventListener('tschart:double-tap', e => {
 ['group-toggled', 'axis-toggled', 'tags-toggled'].forEach(n =>
     root.addEventListener('tschart:' + n, e => log(n + ' ' + JSON.stringify(e.detail))));
 load(NOW - 6 * 3600, NOW, 0);
+
+// Daily energy: stacked kWh bars per mode plus a COP line; today is
+// provisional. Buckets are keyed by YYYY-MM-DD and include empty days.
+const MODES = [['heating', 'Heating', '#f97316'], ['cooling', 'Cooling', '#3b82f6'],
+               ['hot_water', 'Hot water', '#fbbf24']];
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const days = [];
+for (let i = 59; i >= 0; i--) {
+    const d = new Date(); d.setHours(12, 0, 0, 0); d.setDate(d.getDate() - i);
+    const key = d.toISOString().slice(0, 10), s = Math.sin(i / 4);
+    const wh = i % 11 === 7 ? null : { heating: Math.round(9000 + 6000 * s), cooling: i % 5 ? 0 : 2500,
+                                       hot_water: Math.round(2500 + 800 * Math.cos(i)) };
+    days.push({ key, label: String(d.getDate()), accent: i === 0, provisional: i === 0,
+                selectable: !!wh, data: wh && { wh, cop: 2.6 + 0.6 * Math.cos(i / 6), date: d } });
+}
+const bars = new TsBars(document.getElementById('bars'), {
+    id: 'energy', count: 14,
+    labels: { text: b => b.label, minGap: 28 } });
+const kwh = bars.addPane({ id: 'kwh', weight: 3, unit: 'kWh', range: { minStep: 1000, minSpan: 1000 },
+                           fmt: v => String(v / 1000), emptyText: 'No data' });
+MODES.forEach(([m, name, color]) => bars.addSeries(kwh, {
+    id: m, name, color, stack: 'e', value: b => b.data ? b.data.wh[m] : null }));
+const cop = bars.addPane({ id: 'cop', weight: 1, minHeight: 56, unit: 'COP', unitAt: 'middle',
+                           unitColor: '#4ade80', range: { minStep: 100 }, tickLabels: 'ends',
+                           fmt: v => (v / 100).toFixed(0), emptyText: 'No COP estimate in this range' });
+bars.addSeries(cop, { id: 'cop', name: 'COP', color: '#4ade80', geom: 'line', opacity: 0.6, pointRadius: 3,
+                      value: b => b.data ? Math.round(b.data.cop * 100) : null });
+bars.setCard((b, card) => {
+    if (!b.data) return;
+    const d = b.data.date;
+    card.add('title', d.getDate() + ' ' + MON[d.getMonth()] + (b.provisional ? ' \u00b7 so far' : ''));
+    MODES.forEach(([m, name, color]) => card.add('value', name, (b.data.wh[m] / 1000).toFixed(1) + ' kWh', color));
+    card.add('value', 'COP', b.data.cop.toFixed(1), '#4ade80');
+});
+bars.setBuckets(days);
+const broot = document.getElementById('bars');
+broot.addEventListener('tsbars:select', e => log('select ' + e.detail.key));
+broot.addEventListener('tsbars:view', e => log('view ' + JSON.stringify(e.detail)));
 </script>
 </body>
 </html>

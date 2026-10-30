@@ -323,6 +323,41 @@ static void test_notes() {
     CHECK_EQ(g[4], 4);
 }
 
+static void test_buckets() {
+    CHECK_EQ(slot_x(10, 700, 14, 0), 10);
+    CHECK_EQ(slot_x(10, 700, 14, 1), 60);
+    CHECK_EQ(slot_x(10, 700, 14, 3), 160);
+    CHECK_EQ(slot_x(10, 700, 14, -1), -40);
+    CHECK_EQ(slot_x(10, 701, 14, 1), 60);
+    CHECK_EQ(slot_x(10, 701, 14, -1), -41);
+    CHECK_EQ(slot_at(10, 10, 700, 14), 0);
+    CHECK_EQ(slot_at(59, 10, 700, 14), 0);
+    CHECK_EQ(slot_at(60, 10, 700, 14), 1);
+    CHECK_EQ(slot_at(9, 10, 700, 14), -1);
+    CHECK_EQ(slot_at(709, 10, 700, 14), 13);
+    CHECK_EQ(slot_at(710, 10, 700, 14), 14);
+    int32_t a, b;
+    bar_extent(0, 50, 620, 32, &a, &b);
+    CHECK_EQ(a, 9);
+    CHECK_EQ(b, 40);
+    bar_extent(0, 100, 620, 32, &a, &b);
+    CHECK_EQ(a, 34);
+    CHECK_EQ(b, 66);
+    bar_extent(0, 1, 620, 0, &a, &b);
+    CHECK_EQ(a, 0);
+    CHECK_EQ(b, 1);
+    CHECK_EQ(label_every(700, 14, 64), 2);
+    CHECK_EQ(label_every(700, 30, 64), 3);
+    CHECK_EQ(label_every(700, 365, 64), 34);
+    CHECK_EQ(label_every(0, 14, 64), 1);
+    CHECK_EQ(pan_steps(0, 700, 14), 0);
+    CHECK_EQ(pan_steps(-24, 700, 14), 0);
+    CHECK_EQ(pan_steps(-25, 700, 14), 1);
+    CHECK_EQ(pan_steps(-26, 700, 14), 1);
+    CHECK_EQ(pan_steps(74, 700, 14), -1);
+    CHECK_EQ(pan_steps(75, 700, 14), -2);
+}
+
 int main() {
     test_nice_axis();
     test_auto_range();
@@ -335,6 +370,7 @@ int main() {
     test_time_axis();
     test_cursor();
     test_notes();
+    test_buckets();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }

@@ -383,11 +383,50 @@ function groupNotes(xs, labelW) {
     return { count, group };
 }
 
+// ---- bucket (bar) charts: equal slots, slot 0 = first visible bucket ----
+
+// Left edge of slot i; i may be negative or >= count (buckets off-screen).
+function slotX(x1, width, count, i) {
+    if (count <= 0) return x1;
+    const n = width * i;
+    return x1 + (n >= 0 ? idiv(n, count) : -idiv(-n + count - 1, count));
+}
+
+// Slot under x, or a value outside [0, count) when x is outside the plot.
+function slotAt(x, x1, width, count) {
+    if (count <= 0 || width <= 0) return -1;
+    const n = (x - x1) * count;
+    return n >= 0 ? idiv(n, width) : -idiv(-n + width - 1, width);
+}
+
+// Bar inside slot [x1, x2): `permille` of the slot, at most maxPx, at least 1.
+function barExtent(x1, x2, permille, maxPx) {
+    let w = idiv((x2 - x1) * permille, 1000);
+    if (maxPx > 0 && w > maxPx) w = maxPx;
+    if (w < 1) w = 1;
+    const l = x1 + idiv(x2 - x1 - w, 2);
+    return { x1: l, x2: l + w };
+}
+
+// Label every Nth slot so labels sit at least minGap px apart.
+function labelEvery(width, count, minGap) {
+    if (count <= 0 || width <= 0) return 1;
+    const e = idiv(minGap * count + width - 1, width);
+    return e < 1 ? 1 : e;
+}
+
+// Whole slots a drag of dx px moves the view (positive = later buckets).
+function panSteps(dx, width, count) {
+    if (count <= 0 || width <= 0) return 0;
+    const n = -dx * count;
+    return n >= 0 ? idiv(n + idiv(width, 2), width) : -idiv(-n + idiv(width, 2), width);
+}
+
 const logic = {
     niceAxis, autoRange, mapX, mapY, timeAt, interpolatePlateaus, decimate,
     splitPanes, ticksForHeight, placeTags, panLimits, rubberBand, panTarget,
     uncoveredPermille, timeTickStep, firstTick, nearestX, nearestTime, groupNotes,
-    strengthCss, keyFill,
+    strengthCss, keyFill, slotX, slotAt, barExtent, labelEvery, panSteps,
 };
 
 // --------------------------------------------------------------- widget ----
@@ -522,6 +561,32 @@ function localSinceMidnight(t) {
 }
 
 let chartSeq = 0;
+
+/** The readout card: rows [{kind, label, value, color}], capped at maxRows. */
+function cardEl(rows, maxRows) {
+    if (rows.length > maxRows) {
+        rows = rows.slice(0, maxRows - 1);
+        rows.push({ kind: 'text', label: '…' });
+    }
+    const el = h('div', 'tschart-card');
+    el.dataset.tschartCard = '';
+    for (const r of rows) {
+        const row = h('div', 'tschart-row ' + r.kind);
+        if ((r.kind === 'value' || r.kind === 'block') && r.color) {
+            const sw = h('span', 'sw');
+            sw.style.background = r.color;
+            row.appendChild(sw);
+        }
+        const lab = h('span', 'l', r.label || '');
+        if (r.kind === 'block' && r.color) lab.style.color = r.color;
+        row.appendChild(lab);
+        if (r.value !== undefined && r.value !== null && r.value !== '') {
+            row.appendChild(h('span', 'v', r.value));
+        }
+        el.appendChild(row);
+    }
+    return el;
+}
 
 class TsChart {
     /**
@@ -1393,27 +1458,7 @@ class TsChart {
         }
         if (layersAt < 0) layersAt = rows.length;
         rows.splice(layersAt, 0, ...layerRows);
-        if (rows.length > this.m.cardMaxRows) {
-            rows = rows.slice(0, this.m.cardMaxRows - 1);
-            rows.push({ kind: 'text', label: '…' });
-        }
-        const el = h('div', 'tschart-card');
-        el.dataset.tschartCard = '';
-        for (const r of rows) {
-            const row = h('div', 'tschart-row ' + r.kind);
-            if ((r.kind === 'value' || r.kind === 'block') && r.color) {
-                const sw = h('span', 'sw');
-                sw.style.background = r.color;
-                row.appendChild(sw);
-            }
-            const lab = h('span', 'l', r.label || '');
-            if (r.kind === 'block' && r.color) lab.style.color = r.color;
-            row.appendChild(lab);
-            if (r.value !== undefined && r.value !== null && r.value !== '') {
-                row.appendChild(h('span', 'v', r.value));
-            }
-            el.appendChild(row);
-        }
+        const el = cardEl(rows, this.m.cardMaxRows);
         el.style.maxWidth = Math.round((plot.x2 - plot.x1) * 0.6) + 'px';
         el.style.top = (plot.y1 + 4) + 'px';
         el.style.left = '0px';
@@ -1594,7 +1639,611 @@ function measure(text) {
     return measureCtx.measureText(text).width;
 }
 
+// ----------------------------------------------------------------- bars ----
+
+const BARS_METRICS = {
+    gutterW: 52, gutterNarrowW: 40, rightPad: 16, rightNarrowPad: 8, narrowW: 600,
+    topPad: 24, paneGap: 26, labelH: 26, labelMinGap: 64, labelNarrowMinGap: 52,
+    panStartMousePx: 5, panStartTouchPx: 10, springMs: 180, tickMinPx: 24,
+    cardMaxRows: 10, hitTopPx: 0,
+};
+
+const BARS_CSS = `
+.tsbars .tschart-body{touch-action:pan-y}
+.tsbars-axis text,.tsbars-label{fill:var(--ts-dim,#8a8a9a);font:11px system-ui,sans-serif}
+.tsbars-label.accent{fill:var(--ts-accent,#22d3ee);font-weight:700}
+.tsbars:not(.panning) .tsbars-label-out{display:none}
+.tsbars-sel{fill:var(--ts-accent,#22d3ee);fill-opacity:.14}
+.tsbars-sel.outline{fill:none;stroke:var(--ts-accent,#22d3ee);stroke-width:2}
+.tsbars-hover{fill:var(--ts-dim,#8a8a9a);fill-opacity:.1;pointer-events:none}
+.tsbars-hit{fill:transparent;cursor:pointer}
+.tsbars.panning .tsbars-hit{cursor:grabbing}
+`;
+
+let barsCssInjected = false;
+function injectBarsCss() {
+    injectCss();
+    if (barsCssInjected || typeof document === 'undefined') return;
+    barsCssInjected = true;
+    const st = document.createElement('style');
+    st.id = 'tsbars-css';
+    st.textContent = BARS_CSS;
+    document.head.appendChild(st);
+}
+
+/**
+ * Bucket bar chart: one equal-width slot per bucket (a day, a month) on an
+ * ordinal axis, stacked bar series and line/point series in panes, labels
+ * under the slots, tap to select, hover card, and pan by whole buckets.
+ * The host passes the buckets oldest first, including some either side of
+ * the view, so a drag slides real neighbours in. See ../docs/api.md.
+ */
+class TsBars {
+    /**
+     * opts: {id, count (buckets in view), barWidth (0..1, default .62),
+     *   barMaxPx (32), selectStyle 'fill'|'outline', labels: {text(b, index)
+     *   -> string|null, mode 'every'|'sparse', minGap}, metrics}
+     */
+    constructor(root, opts = {}) {
+        injectBarsCss();
+        this.o = Object.assign({ count: 14, barWidth: 0.62, barMaxPx: 32, selectStyle: 'fill' }, opts);
+        this.o.labels = Object.assign({ mode: 'every', text: b => b.label || b.key }, opts.labels);
+        this.m = Object.assign({}, BARS_METRICS, opts.metrics);
+        this.uid = 'tsb' + (++chartSeq);
+        this.panes = [];
+        this.series = [];
+        this.buckets = [];
+        this.first = 0;
+        this.limits = null;
+        this.selected = null;
+        this.cardCb = null;
+        this.status = { st: 'ok', text: '' };
+        this.dx = 0;
+        this.gesture = null;
+        this.patterns = new Map();
+        this._build(root);
+    }
+
+    /** cfg: {id, weight, minHeight, unit, unitAt 'top'|'middle', unitColor,
+     *  range: {...autoRange cfg}, maxTicks, tickLabels 'all'|'ends',
+     *  fmt(v, ctx) with ctx 'axis' | 'card', emptyText} */
+    addPane(cfg) {
+        const p = Object.assign({ weight: 1, minHeight: 0, unit: '', unitAt: 'top',
+                                  range: { auto: true }, maxTicks: 5, tickLabels: 'all',
+                                  fmt: v => String(v), emptyText: '' }, cfg);
+        p.series = [];
+        p.index = this.panes.length;
+        this.panes.push(p);
+        this._dirty();
+        return p;
+    }
+
+    /** cfg: {id, name, color, value(bucket) -> number|null, geom 'bar'|'line',
+     *  stack (id; bars with the same id in a pane stack in series order),
+     *  width, opacity (line), pointRadius (0 = none; number or fn(count))} */
+    addSeries(pane, cfg) {
+        const sr = Object.assign({ geom: 'bar', stack: null, width: 1.5, opacity: 0.55,
+                                   pointRadius: 0 }, cfg);
+        sr.pane = pane;
+        pane.series.push(sr);
+        this.series.push(sr);
+        this._dirty();
+        return sr;
+    }
+
+    /** buckets: [{key, data, label, accent, provisional, selectable}], oldest
+     *  first. view: {first} (index), {firstKey}, {lastKey} or {last} (index);
+     *  default keeps the current first key, else shows the newest. */
+    setBuckets(buckets, view = {}) {
+        const oldKey = this.buckets[this.first] && this.buckets[this.first].key;
+        this.buckets = (buckets || []).slice();
+        this.keyIndex = new Map(this.buckets.map((b, i) => [b.key, i]));
+        let first;
+        if (view.first !== undefined) first = view.first;
+        else if (view.firstKey !== undefined && this.keyIndex.has(view.firstKey)) first = this.keyIndex.get(view.firstKey);
+        else if (view.lastKey !== undefined && this.keyIndex.has(view.lastKey)) first = this.keyIndex.get(view.lastKey) - this.o.count + 1;
+        else if (view.last !== undefined) first = view.last - this.o.count + 1;
+        else if (oldKey !== undefined && this.keyIndex.has(oldKey)) first = this.keyIndex.get(oldKey);
+        else first = this.buckets.length - this.o.count;
+        this.first = clamp(first, 0, Math.max(0, this.buckets.length - this.o.count));
+        this._dirty();
+    }
+
+    /** Moves the view to start at bucket index `first` (silent). */
+    setView(first) {
+        this.first = clamp(first, 0, Math.max(0, this.buckets.length - this.o.count));
+        this._dirty();
+    }
+
+    getView() {
+        const b = this.buckets, n = this.o.count;
+        const last = Math.min(b.length, this.first + n) - 1;
+        return { first: this.first, count: n,
+                 firstKey: b[this.first] ? b[this.first].key : null,
+                 lastKey: last >= 0 && b[last] ? b[last].key : null };
+    }
+
+    setCount(n) {
+        this.o.count = Math.max(1, n | 0);
+        this.setView(this.first);
+    }
+
+    /** How many buckets a drag may move back / forward from the view before
+     *  it rubber-bands (also capped by the loaded buckets). null = loaded. */
+    setPanLimits(back, forward) {
+        this.limits = back === null || back === undefined ? null : { back, forward };
+    }
+
+    /** Highlights a bucket's column (silent). key = null clears. */
+    setSelected(key) {
+        this.selected = key === undefined ? null : key;
+        this._drawSelection();
+    }
+
+    getSelected() { return this.selected; }
+
+    /** cb(bucket, card) adds rows with card.add(kind, label, value, color). */
+    setCard(cb) { this.cardCb = cb; }
+
+    /** st: 'ok' | 'loading' | 'empty' | 'error' */
+    setStatus(st, text = '') {
+        this.status = { st, text };
+        this._drawStatus();
+    }
+
+    /** Plot rectangle (px, body coords): x across the slots, y over the panes. */
+    getPlotArea() { return this.geom ? { ...this.geom.plot } : null; }
+
+    /** Render synchronously (tests, screenshots). */
+    flush() {
+        cancelAnimationFrame(this.raf);
+        this.raf = 0;
+        this._render();
+    }
+
+    destroy() {
+        if (this.ro) this.ro.disconnect();
+        cancelAnimationFrame(this.raf);
+        cancelAnimationFrame(this.springRaf);
+        this.root.remove();
+    }
+
+    // ---- internals ----
+
+    _emit(name, detail) {
+        this.root.dispatchEvent(new CustomEvent('tsbars:' + name, { detail, bubbles: true }));
+    }
+
+    _build(root) {
+        this.root = root;
+        root.classList.add('tschart', 'tsbars');
+        if (this.o.id) root.dataset.tsbars = this.o.id;
+        root.textContent = '';
+        this.body = h('div', 'tschart-body');
+        root.appendChild(this.body);
+        this.svg = s('svg', { class: 'tsbars-svg' }, this.body);
+        this.ov = h('div', 'tschart-ov');
+        this.body.appendChild(this.ov);
+        this._bindInput();
+        if (typeof ResizeObserver !== 'undefined') {
+            this.ro = new ResizeObserver(() => this._dirty());
+            this.ro.observe(this.body);
+        }
+    }
+
+    _dirty() {
+        if (this.raf || typeof requestAnimationFrame === 'undefined') return;
+        this.raf = requestAnimationFrame(() => {
+            this.raf = 0;
+            this._render();
+        });
+    }
+
+    _selectable(b) {
+        return !!b && b.selectable !== false && (b.selectable === true || (b.data !== null && b.data !== undefined));
+    }
+
+    _pattern(color) {
+        let id = this.patterns.get(color);
+        if (id) return id;
+        id = `${this.uid}-prov${this.patterns.size}`;
+        this.patterns.set(color, id);
+        return id;
+    }
+
+    // Stripes in the series colour over a light mix of it: an unfinished
+    // bucket still reads as that series.
+    _definePatterns(defs) {
+        for (const [color, id] of this.patterns) {
+            const p = s('pattern', { id, width: 6, height: 6, patternUnits: 'userSpaceOnUse',
+                                     patternTransform: 'rotate(45)' }, defs);
+            const f = keyFill({ color, fillStrength: '35%' });
+            const bg = s('rect', { width: 6, height: 6, 'fill-opacity': f.opacity }, p);
+            bg.style.fill = f.color;
+            s('rect', { width: 3, height: 6, fill: color }, p);
+        }
+    }
+
+    _layout() {
+        const W = this.body.clientWidth, H = this.body.clientHeight;
+        if (!W || !H) return null;
+        const m = this.m, narrow = W < m.narrowW;
+        const plot = { x1: narrow ? m.gutterNarrowW : m.gutterW, x2: W - (narrow ? m.rightNarrowPad : m.rightPad),
+                       y1: m.topPad, y2: H - m.labelH };
+        const pw = Math.max(1, plot.x2 - plot.x1), n = this.o.count;
+        const slots = splitPanes(plot.y1, plot.y2, m.paneGap, this.panes.map(p => p.weight),
+                                 this.panes.map(p => p.minHeight), this.panes.map(() => true));
+        const vis = [];
+        for (let i = this.first; i < Math.min(this.buckets.length, this.first + n); i++) vis.push(i);
+        const axes = this.panes.map((p, k) => {
+            let lo = Infinity, hi = -Infinity;
+            const add = v => { if (v < lo) lo = v; if (v > hi) hi = v; };
+            for (const i of vis) {
+                const b = this.buckets[i], stacks = new Map();
+                for (const sr of p.series) {
+                    const v = sr.value(b);
+                    if (isNone(v)) continue;
+                    if (sr.geom === 'bar') {
+                        const key = sr.stack === null ? sr : sr.stack;
+                        const sum = (stacks.get(key) || 0) + Math.max(0, v);
+                        stacks.set(key, sum);
+                        add(0);
+                        add(sum);
+                    } else {
+                        add(v);
+                    }
+                }
+            }
+            const sh = slots[k].y2 - slots[k].y1;
+            const ticks = ticksForHeight(sh, p.maxTicks, m.tickMinPx);
+            const have = lo <= hi;
+            const a = have ? autoRange(p.range, lo, hi, ticks) : autoRange(p.range, 1, 0, ticks);
+            a.empty = !have;
+            return a;
+        });
+        return { W, H, narrow, plot, pw, n, slots, axes };
+    }
+
+    _x(j) { return slotX(this.geom.plot.x1, this.geom.pw, this.geom.n, j); }
+
+    // Buckets drawn: the view plus up to a view's worth either side.
+    _drawRange() {
+        const n = this.o.count;
+        return { lo: Math.max(0, this.first - n), hi: Math.min(this.buckets.length, this.first + 2 * n) };
+    }
+
+    _render() {
+        const svg = this.svg;
+        svg.textContent = '';
+        this.ov.querySelectorAll('.tschart-card').forEach(e => e.remove());
+        const g = this.geom = this._layout();
+        if (!g) return;
+        const { W, H, plot, slots, axes } = g;
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        const defs = s('defs', {}, svg);
+        s('rect', { x: plot.x1, y: 0, width: g.pw, height: plot.y2 + 4 },
+          s('clipPath', { id: this.uid + '-plot' }, defs));
+        s('rect', { x: plot.x1 - 4, y: plot.y2, width: W - plot.x1 + 4, height: H - plot.y2 },
+          s('clipPath', { id: this.uid + '-labels' }, defs));
+
+        // Axes fit the view only, so they hold still while a drag slides the buckets.
+        const axisG = s('g', { class: 'tsbars-axis' }, svg);
+        this.panes.forEach((p, k) => {
+            const a = axes[k], sl = slots[k];
+            const yOf = v => mapY(v, a.lo, a.hi, sl.y1, sl.y2) + 0.5;
+            if (p.unit) {
+                const mid = p.unitAt === 'middle';
+                const t = s('text', { x: plot.x1 - 8, y: mid ? (sl.y1 + sl.y2) / 2 + 4 : sl.y1 - 10,
+                                      'text-anchor': 'end', class: 'tsbars-unit' }, axisG);
+                t.textContent = p.unit;
+                if (p.unitColor) t.style.fill = p.unitColor;
+            }
+            if (a.empty && p.emptyText) {
+                s('line', { x1: plot.x1, x2: plot.x2, y1: sl.y2 + 0.5, y2: sl.y2 + 0.5, class: 'tschart-grid' }, axisG);
+                const t = s('text', { x: (plot.x1 + plot.x2) / 2, y: (sl.y1 + sl.y2) / 2 + 4,
+                                      'text-anchor': 'middle', class: 'tsbars-empty' }, axisG);
+                t.textContent = p.emptyText;
+                return;
+            }
+            for (let v = a.lo; v <= a.hi; v += a.step) {
+                const y = yOf(v);
+                s('line', { x1: plot.x1, x2: plot.x2, y1: y, y2: y, class: 'tschart-grid' }, axisG);
+                const ends = p.tickLabels === 'ends';
+                if (ends && v !== a.lo && v + a.step <= a.hi) continue;
+                // With end labels only, they sit inside the pane so the middle stays free for the unit.
+                const dy = ends ? (v === a.lo ? 0 : 8) : 4;
+                const t = s('text', { x: plot.x1 - 8, y: y + dy, 'text-anchor': 'end' }, axisG);
+                t.textContent = p.fmt(v, 'axis');
+            }
+        });
+
+        const panClip = s('g', { 'clip-path': `url(#${this.uid}-plot)` }, svg);
+        this.hoverEl = s('rect', { class: 'tsbars-hover', y: plot.y1, height: plot.y2 - plot.y1, rx: 3,
+                                   style: 'display:none' }, panClip);
+        const pan = this.panG = s('g', { class: 'tsbars-pan' }, panClip);
+        this.selEl = s('rect', { class: 'tsbars-sel' + (this.o.selectStyle === 'outline' ? ' outline' : ''),
+                                 y: plot.y1, height: plot.y2 - plot.y1 + 4, rx: this.o.selectStyle === 'outline' ? 6 : 3,
+                                 style: 'display:none' }, pan);
+
+        const { lo, hi } = this._drawRange();
+        this.hoverKey = null;
+        this.panes.forEach((p, k) => {
+            const a = axes[k], sl = slots[k];
+            if (a.empty) return;
+            const yOf = v => clamp(mapY(v, a.lo, a.hi, sl.y1, sl.y2), sl.y1, sl.y2);
+            // bars
+            const base = new Map();
+            for (let i = lo; i < hi; i++) {
+                const b = this.buckets[i], j = i - this.first;
+                const ext = barExtent(this._x(j), this._x(j + 1), Math.round(this.o.barWidth * 1000), this.o.barMaxPx);
+                base.clear();
+                for (const sr of p.series) {
+                    if (sr.geom !== 'bar') continue;
+                    const v = sr.value(b);
+                    if (isNone(v) || v <= 0) continue;
+                    const key = sr.stack === null ? sr : sr.stack;
+                    const from = base.get(key) || 0, to = from + v;
+                    base.set(key, to);
+                    const y0 = yOf(from), y1 = yOf(to);
+                    const r = s('rect', { x: ext.x1, y: y1, width: ext.x2 - ext.x1, height: Math.max(0.5, y0 - y1),
+                                          class: 'tsbars-bar' + (b.provisional ? ' provisional' : ''),
+                                          'data-series': sr.id, 'data-key': b.key }, pan);
+                    if (b.provisional) r.setAttribute('fill', `url(#${this._pattern(sr.color)})`);
+                    else r.setAttribute('fill', sr.color);
+                }
+            }
+            // lines and points, broken at missing values
+            for (const sr of p.series) {
+                if (sr.geom !== 'line') continue;
+                let d = '', pen = false;
+                const pts = [];
+                for (let i = lo; i < hi; i++) {
+                    const v = sr.value(this.buckets[i]);
+                    if (isNone(v)) { pen = false; continue; }
+                    const j = i - this.first, x = (this._x(j) + this._x(j + 1)) / 2, y = yOf(v);
+                    d += `${pen ? 'L' : 'M'}${x} ${y}`;
+                    pen = true;
+                    pts.push([x, y, this.buckets[i].key]);
+                }
+                if (d) {
+                    s('path', { d, fill: 'none', stroke: sr.color, 'stroke-width': sr.width,
+                                'stroke-opacity': sr.opacity, 'stroke-linejoin': 'round',
+                                class: 'tsbars-line', 'data-series': sr.id }, pan);
+                }
+                const r = typeof sr.pointRadius === 'function' ? sr.pointRadius(g.n) : sr.pointRadius;
+                if (r > 0) {
+                    for (const [x, y, key] of pts) {
+                        s('circle', { cx: x, cy: y, r, fill: sr.color, class: 'tsbars-point',
+                                      'data-series': sr.id, 'data-key': key }, pan);
+                    }
+                }
+            }
+        });
+        this._definePatterns(defs);
+
+        // labels, sliding with the buckets
+        const labClip = s('g', { 'clip-path': `url(#${this.uid}-labels)` }, svg);
+        this.labelG = s('g', { class: 'tsbars-pan' }, labClip);
+        const L = this.o.labels, newest = Math.min(this.buckets.length, this.first + g.n) - 1;
+        const minGap = L.minGap || (g.narrow ? this.m.labelNarrowMinGap : this.m.labelMinGap);
+        const every = labelEvery(g.pw, g.n, minGap);
+        let lastX = -Infinity;
+        for (let i = lo; i < hi; i++) {
+            const b = this.buckets[i], j = i - this.first;
+            if (L.mode === 'every' && (newest - i) % every !== 0) continue;
+            const text = L.text(b, i);
+            if (text === null || text === undefined || text === '') continue;
+            const cx = (this._x(j) + this._x(j + 1)) / 2;
+            if (L.mode === 'sparse') {
+                if (cx - lastX < minGap * 0.7) continue;
+                lastX = cx;
+            }
+            // The newest label is end-anchored when it would run off the right edge.
+            const edge = i === newest && cx + measure(text) / 2 > W - 2;
+            const out = j < 0 || j >= g.n;
+            const t = s('text', { x: edge ? W - 2 : cx, y: plot.y2 + 18, 'text-anchor': edge ? 'end' : 'middle',
+                                  class: 'tsbars-label' + (b.accent ? ' accent' : '') + (out ? ' tsbars-label-out' : ''),
+                                  'data-key': b.key }, this.labelG);
+            t.textContent = text;
+        }
+
+        // One full-height target per selectable bucket in view.
+        const hits = s('g', { class: 'tsbars-hits' }, svg);
+        for (let j = 0; j < g.n; j++) {
+            const b = this.buckets[this.first + j];
+            if (!this._selectable(b)) continue;
+            s('rect', { class: 'tsbars-hit', x: this._x(j), y: plot.y1, width: this._x(j + 1) - this._x(j),
+                        height: plot.y2 - plot.y1, 'data-key': b.key }, hits);
+        }
+        this._drawSelection();
+        this._applyShift();
+        this._drawStatus();
+    }
+
+    _drawSelection() {
+        if (!this.selEl || !this.geom) return;
+        const i = this.selected === null ? undefined : (this.keyIndex && this.keyIndex.get(this.selected));
+        if (i === undefined) { this.selEl.style.display = 'none'; return; }
+        const j = i - this.first, inset = this.o.selectStyle === 'outline' ? 2 : 0;
+        this.selEl.setAttribute('x', this._x(j) + inset);
+        this.selEl.setAttribute('width', Math.max(1, this._x(j + 1) - this._x(j) - 2 * inset));
+        this.selEl.style.display = '';
+    }
+
+    _drawStatus() {
+        this.ov.querySelectorAll('.tschart-status, .tschart-spin').forEach(e => e.remove());
+        const g = this.geom;
+        if (!g || this.status.st === 'ok') return;
+        const cx = (g.plot.x1 + g.plot.x2) / 2, cy = (g.plot.y1 + g.plot.y2) / 2;
+        if (this.status.st === 'loading') {
+            const sp = h('div', 'tschart-spin');
+            sp.style.left = cx + 'px';
+            sp.style.top = cy + 'px';
+            this.ov.appendChild(sp);
+            if (!this.status.text) return;
+        }
+        const el = h('div', 'tschart-status', this.status.text);
+        el.dataset.tschartStatus = this.status.st;
+        el.style.left = cx + 'px';
+        el.style.top = (this.status.st === 'loading' ? cy + 28 : cy) + 'px';
+        this.ov.appendChild(el);
+    }
+
+    _applyShift() {
+        const t = this.dx ? `translate(${this.dx} 0)` : null;
+        for (const el of [this.panG, this.labelG]) {
+            if (!el) continue;
+            if (t) el.setAttribute('transform', t);
+            else el.removeAttribute('transform');
+        }
+    }
+
+    _hover(x) {
+        const g = this.geom;
+        const hide = () => {
+            if (this.hoverEl) this.hoverEl.style.display = 'none';
+            this.ov.querySelectorAll('.tschart-card').forEach(e => e.remove());
+            this.hoverKey = null;
+        };
+        if (!g || x === null) { hide(); return; }
+        const j = slotAt(x, g.plot.x1, g.pw, g.n);
+        const b = j >= 0 && j < g.n ? this.buckets[this.first + j] : null;
+        if (!b || !this._selectable(b)) { hide(); return; }
+        if (this.hoverKey === b.key) return;
+        hide();
+        this.hoverKey = b.key;
+        const x1 = this._x(j), x2 = this._x(j + 1);
+        this.hoverEl.setAttribute('x', x1);
+        this.hoverEl.setAttribute('width', x2 - x1);
+        this.hoverEl.style.display = '';
+        if (!this.cardCb) return;
+        const rows = [];
+        this.cardCb(b, { add: (kind, label, value, color) => rows.push({ kind, label, value, color }) });
+        if (!rows.length) return;
+        const el = cardEl(rows, this.m.cardMaxRows);
+        el.style.top = (g.plot.y1 + 4) + 'px';
+        el.style.left = '0px';
+        el.style.visibility = 'hidden';
+        this.ov.appendChild(el);
+        const w = el.offsetWidth, cx = (x1 + x2) / 2;
+        let left = cx + 14;
+        if (left + w > g.W) left = cx - 14 - w;
+        el.style.left = Math.max(0, left) + 'px';
+        el.style.visibility = '';
+    }
+
+    // Drag limits in px: the loaded buckets, capped by the host's limits.
+    _limits() {
+        const g = this.geom, n = this.o.count;
+        let back = this.first, fwd = Math.max(0, this.buckets.length - this.first - n);
+        if (this.limits) {
+            back = Math.min(back, Math.max(0, this.limits.back));
+            fwd = Math.min(fwd, Math.max(0, this.limits.forward));
+        }
+        const slot = g.pw / n;
+        return { minDx: -Math.floor(fwd * slot), maxDx: Math.floor(back * slot) };
+    }
+
+    _bindInput() {
+        const b = this.body;
+        const local = e => {
+            const r = b.getBoundingClientRect();
+            return { x: e.clientX - r.left, y: e.clientY - r.top };
+        };
+        const inPlot = p => this.geom && p.x >= this.geom.plot.x1 && p.x <= this.geom.plot.x2 &&
+                            p.y >= this.geom.plot.y1 && p.y <= this.geom.H;
+        b.addEventListener('pointerdown', e => {
+            if (e.button > 0 || !e.isPrimary || !this.geom) return;
+            const p = local(e);
+            if (!inPlot(p)) return;
+            cancelAnimationFrame(this.springRaf);
+            this.springRaf = 0;
+            this.gesture = { id: e.pointerId, touch: e.pointerType !== 'mouse', x0: p.x, y0: p.y,
+                             base: this.dx, pan: false };
+        });
+        b.addEventListener('pointermove', e => {
+            const p = local(e), gs = this.gesture;
+            if (!gs) {
+                if (e.pointerType === 'mouse' && !this.springRaf) this._hover(inPlot(p) ? p.x : null);
+                return;
+            }
+            if (e.pointerId !== gs.id) return;
+            const dx = p.x - gs.x0, dy = p.y - gs.y0;
+            if (!gs.pan) {
+                const start = gs.touch ? this.m.panStartTouchPx : this.m.panStartMousePx;
+                if (Math.abs(dx) > start && Math.abs(dx) > Math.abs(dy)) {
+                    gs.pan = true;
+                    gs.lim = this._limits();
+                    try { b.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+                    this.root.classList.add('panning');
+                    this._hover(null);
+                } else if (gs.touch && Math.abs(dy) > start) {
+                    this.gesture = null;
+                    return;
+                } else {
+                    return;
+                }
+            }
+            this.dx = rubberBand(Math.round(gs.base + dx), gs.lim);
+            this._applyShift();
+        });
+        const end = (e, cancelled) => {
+            const gs = this.gesture;
+            if (!gs || e.pointerId !== gs.id) return;
+            this.gesture = null;
+            if (!gs.pan) {
+                if (cancelled || !this.geom) return;
+                const p = local(e), g = this.geom;
+                const j = slotAt(p.x, g.plot.x1, g.pw, g.n);
+                const i = this.first + j, bk = j >= 0 && j < g.n ? this.buckets[i] : null;
+                if (!this._selectable(bk)) return;
+                this.selected = bk.key;
+                this._drawSelection();
+                this._emit('select', { key: bk.key, index: i, bucket: bk });
+                return;
+            }
+            const g = this.geom, shown = this.dx;
+            const dx = cancelled ? 0 : clamp(shown, gs.lim.minDx, gs.lim.maxDx);
+            const steps = panSteps(dx, g.pw, g.n);
+            let moved = 0;
+            if (steps) {
+                const before = this.first;
+                this.setView(this.first + steps);
+                moved = this.first - before;
+                this.flush();
+                this._emit('view', Object.assign({ steps: moved }, this.getView()));
+            }
+            // The new view is drawn in place; ease the leftover part-slot home.
+            this.dx = shown + Math.round(moved * g.pw / g.n);
+            this._applyShift();
+            this._springHome();
+        };
+        b.addEventListener('pointerup', e => end(e, false));
+        b.addEventListener('pointercancel', e => end(e, true));
+        b.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !this.gesture) this._hover(null); });
+    }
+
+    _springHome() {
+        const from = this.dx, t0 = performance.now(), ms = this.m.springMs;
+        if (!from) { this.root.classList.remove('panning'); return; }
+        const step = now => {
+            const k = Math.min(1, (now - t0) / ms), r = (1 - k) * (1 - k);
+            this.dx = Math.round(from * r);
+            this._applyShift();
+            if (k < 1) this.springRaf = requestAnimationFrame(step);
+            else {
+                this.springRaf = 0;
+                this.root.classList.remove('panning');
+            }
+        };
+        this.springRaf = requestAnimationFrame(step);
+    }
+}
+
 TsChart.METRICS = METRICS;
+TsChart.Bars = TsBars;
+TsBars.METRICS = BARS_METRICS;
+if (typeof self !== 'undefined') self.TsBars = TsBars;
 
 TsChart.logic = logic;
 return TsChart;
