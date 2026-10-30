@@ -312,14 +312,19 @@ void draw_notes(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
         } else {
             snprintf(label, sizeof(label), "%s\xC3\x97%u", d->note_prefix, (unsigned)(j - i));
         }
+        // Label right of the line, or left of it where it wouldn't fit, so
+        // the line never runs through its own label.
         int32_t lx = xs[i] + 6;
-        if (lx + NOTE_LABEL_W > P.x2) lx = P.x2 - NOTE_LABEL_W;
-        text(layer, {lx, top + 4, lx + NOTE_LABEL_W, P.y1 - 4}, label, first.color,
-             LV_TEXT_ALIGN_LEFT, main_font(c));
-        // Carry each line up into the strip so the label flags it.
-        for (size_t k = i; k < j; k++) {
-            line(layer, xs[k], top + 8, xs[k], P.y1, d->notes[idx[k]].color, 2);
+        lv_text_align_t align = LV_TEXT_ALIGN_LEFT;
+        if (lx + NOTE_LABEL_W > P.x2) {
+            lx = LV_MAX(P.x1, xs[i] - 6 - NOTE_LABEL_W);
+            align = LV_TEXT_ALIGN_RIGHT;
         }
+        text(layer, {lx, top + 4, lx + NOTE_LABEL_W, P.y1 - 4}, label, first.color, align,
+             main_font(c));
+        // Only the group's first line enters the strip; the others would cut
+        // through the shared label.
+        line(layer, xs[i], top + 8, xs[i], P.y1, first.color, 2);
         i = j;
     }
     lv_free(xs);

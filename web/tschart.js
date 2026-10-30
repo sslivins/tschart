@@ -1106,7 +1106,10 @@ class TsChart {
                 const ng = s('g', { class: 'tschart-note', 'data-time': notes[i].time }, st);
                 s('line', { x1: x, x2: x, y1: top + 4, y2: plot.y1, stroke: notes[i].color,
                             'stroke-width': 2 }, ng);
-                const tx = Math.min(x + 4, plot.x2 - measure(label) - 2);
+                // Right of the line, or left where it wouldn't fit, so the
+                // line never runs through its own label.
+                const lw = measure(label);
+                const tx = x + 4 + lw <= plot.x2 - 2 ? x + 4 : Math.max(plot.x1, x - 4 - lw);
                 const te = s('text', { x: tx, y: top + this.m.noteStripH / 2 + 4,
                                        class: 'tschart-note-label' }, ng);
                 te.style.fill = notes[i].color;
