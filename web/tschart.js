@@ -808,6 +808,7 @@ class TsChart {
         this.ov = h('div', 'tschart-ov');
         this.body.appendChild(this.ov);
         this.patterns = new Map();
+        this.pillEls = new Map();
         this._bindInput();
         if (typeof ResizeObserver !== 'undefined') {
             this.ro = new ResizeObserver(() => this._dirty());
@@ -1162,17 +1163,24 @@ class TsChart {
         // pills
         this.panes.forEach((p, i) => {
             if (!g.vis[i] || !p.unit) return;
-            const b = h('button', 'tschart-pill', `${p.unit} ${this.axisOpen ? '◂' : '▸'}`);
-            b.type = 'button';
-            b.dataset.tschartPill = p.id;
+            // Kept across redraws: a hover redraw between mousedown and
+            // mouseup would otherwise swallow the click.
+            let b = this.pillEls.get(p.id);
+            if (!b) {
+                b = h('button', 'tschart-pill');
+                b.type = 'button';
+                b.dataset.tschartPill = p.id;
+                b.addEventListener('pointerdown', e => e.stopPropagation());
+                b.addEventListener('click', () => {
+                    this.setAxisOpen(!this.axisOpen);
+                    this._emit('axis-toggled', { on: this.axisOpen });
+                });
+                this.pillEls.set(p.id, b);
+            }
+            b.textContent = `${p.unit} ${this.axisOpen ? '◂' : '▸'}`;
             b.style.color = p.color;
             b.style.left = (plot.x1 + 4 + (this.axisOpen ? m.gutterW : 0)) + 'px';
             b.style.top = (slots[i].y1 + 4) + 'px';
-            b.addEventListener('pointerdown', e => e.stopPropagation());
-            b.addEventListener('click', () => {
-                this.setAxisOpen(!this.axisOpen);
-                this._emit('axis-toggled', { on: this.axisOpen });
-            });
             ov.appendChild(b);
         });
 
@@ -1399,8 +1407,9 @@ class TsChart {
             const gs = this.gesture;
             if (!gs) {
                 if (e.pointerType === 'mouse' && !this.spring) {
-                    this.hoverX = inPlot(p) ? p.x : null;
-                    this._setCursor(inPlot(p) ? this._cursorAt(p.x) : null);
+                    const on = inPlot(p) && !(e.target.closest && e.target.closest('.tschart-pill'));
+                    this.hoverX = on ? p.x : null;
+                    this._setCursor(on ? this._cursorAt(p.x) : null);
                 }
                 return;
             }
