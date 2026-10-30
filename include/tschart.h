@@ -221,6 +221,10 @@ typedef struct {
     lv_opa_t opa;
     uint8_t style;             /* tschart_span_style_t */
     uint8_t min_width;         /* px, so short spans still show */
+    /* NULL, or a key id: colour, style and fill come from that key and
+     * color/opa/style above are ignored. Resolved when the spans are set, so
+     * add keys first; a span naming an unknown key isn't drawn. */
+    const char *key;
 } tschart_span_t;
 
 typedef struct {
@@ -237,6 +241,11 @@ void tschart_set_notes(lv_obj_t *c, const tschart_note_t *n, size_t count,
                        const char *prefix);
 void tschart_add_key(lv_obj_t *c, const char *id, const char *label,
                      lv_color_t color, tschart_span_style_t style);
+/** Keyed FILL spans and the key's swatch become an opaque mix of
+ *  `strength` of the key colour over the chart background (bg_color, which
+ *  must be opaque), so they read as the legend colour on any background.
+ *  LV_OPA_COVER = the plain colour; 0 (default) = legacy translucent opa 20%. */
+void tschart_key_set_fill_strength(lv_obj_t *c, const char *id, lv_opa_t strength);
 void tschart_clear_keys(lv_obj_t *c);
 
 /* ---- Header, axis, tags -------------------------------------------------- */

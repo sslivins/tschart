@@ -563,7 +563,10 @@ void destructor_cb(const lv_obj_class_t *, lv_obj_t *obj) {
     if (d->has_deferred) release_ds(&d->deferred);
     for (auto &s : d->sources) lv_free(s.times);
     for (auto &l : d->layers) lv_free(l.vals);
-    for (auto &s : d->spans) lv_free(s.spans);
+    for (auto &s : d->spans) {
+        lv_free(s.spans);
+        lv_free(s.key_idx);
+    }
     lv_free(d->notes);
     d->canvas = nullptr;  // child, already deleted
     cache_free(d);
@@ -585,6 +588,7 @@ void event_cb(const lv_obj_class_t *, lv_event_t *e) {
             break;
         case LV_EVENT_SIZE_CHANGED:
         case LV_EVENT_STYLE_CHANGED:
+            refresh_key_swatches(c);
             D(c)->static_gen++;
             D(c)->layout_dirty = true;
             schedule(c);
@@ -1020,13 +1024,32 @@ void tschart_set_spans(lv_obj_t *c, uint8_t set_id, const tschart_span_t *s, siz
     if (set_id >= TSCHART_MAX_SPAN_SETS) return;
     SpanSet &set = d->spans[set_id];
     lv_free(set.spans);
+    lv_free(set.key_idx);
     set.spans = nullptr;
+    set.key_idx = nullptr;
     set.count = 0;
     if (n && s) {
         set.spans = (tschart_span_t *)lv_malloc(n * sizeof(*s));
-        if (set.spans) {
+        set.key_idx = (int8_t *)lv_malloc(n);
+        if (set.spans && set.key_idx) {
             memcpy(set.spans, s, n * sizeof(*s));
+            for (size_t i = 0; i < n; i++) {
+                int8_t idx = -1;
+                if (s[i].key) {
+                    idx = -2;  // unknown key: skipped
+                    for (uint8_t k = 0; k < d->nkeys; k++) {
+                        if (strcmp(d->keys[k].id, s[i].key) == 0) idx = (int8_t)k;
+                    }
+                }
+                set.key_idx[i] = idx;
+                set.spans[i].key = nullptr;  // caller's string isn't kept
+            }
             set.count = n;
+        } else {
+            lv_free(set.spans);
+            lv_free(set.key_idx);
+            set.spans = nullptr;
+            set.key_idx = nullptr;
         }
     }
     invalidate_static(c);
@@ -1062,6 +1085,7 @@ void tschart_add_key(lv_obj_t *c, const char *id, const char *label, lv_color_t 
     copy_str(k.label, sizeof(k.label), label);
     k.color = color;
     k.style = style;
+    k.fill_strength = 0;
     k.obj = passive_child(d->key_row);
     lv_obj_set_size(k.obj, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(k.obj, LV_FLEX_FLOW_ROW);
@@ -1069,6 +1093,7 @@ void tschart_add_key(lv_obj_t *c, const char *id, const char *label, lv_color_t 
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_column(k.obj, 6, 0);
     lv_obj_t *sw = passive_child(k.obj);
+    k.swatch = sw;
     lv_obj_set_size(sw, 12, 12);
     lv_obj_set_style_radius(sw, 2, 0);
     lv_obj_set_style_bg_color(sw, color, 0);
@@ -1085,10 +1110,41 @@ void tschart_add_key(lv_obj_t *c, const char *id, const char *label, lv_color_t 
     invalidate_static(c);
 }
 
+void tschart_key_set_fill_strength(lv_obj_t *c, const char *id, lv_opa_t strength) {
+    Impl *d = D(c);
+    for (uint8_t i = 0; i < d->nkeys; i++) {
+        if (strcmp(d->keys[i].id, id) != 0) continue;
+        d->keys[i].fill_strength = strength;
+        refresh_key_swatches(c);
+        invalidate_static(c);
+        return;
+    }
+}
+
+void refresh_key_swatches(lv_obj_t *c) {
+    Impl *d = D(c);
+    for (uint8_t i = 0; i < d->nkeys; i++) {
+        const Key &k = d->keys[i];
+        if (k.style != TSCHART_SPAN_FILL) continue;
+        lv_color_t col = k.color;
+        lv_opa_t opa;
+        if (k.fill_strength) key_fill(c, k, &col, &opa);
+        lv_obj_set_style_bg_color(k.swatch, col, 0);
+        lv_obj_set_style_border_color(k.swatch, k.color, 0);
+        lv_obj_set_style_border_width(k.swatch, k.fill_strength ? 1 : 0, 0);
+    }
+}
+
 void tschart_clear_keys(lv_obj_t *c) {
     Impl *d = D(c);
     for (uint8_t i = 0; i < d->nkeys; i++) lv_obj_delete(d->keys[i].obj);
     d->nkeys = 0;
+    // Key indices are now meaningless: keyed spans stop drawing until re-set.
+    for (auto &set : d->spans) {
+        for (size_t i = 0; i < set.count; i++) {
+            if (set.key_idx[i] >= 0) set.key_idx[i] = -2;
+        }
+    }
     update_header(c);
     invalidate_static(c);
 }

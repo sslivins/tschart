@@ -387,6 +387,7 @@ const logic = {
     niceAxis, autoRange, mapX, mapY, timeAt, interpolatePlateaus, decimate,
     splitPanes, ticksForHeight, placeTags, panLimits, rubberBand, panTarget,
     uncoveredPermille, timeTickStep, firstTick, nearestX, nearestTime, groupNotes,
+    strengthCss, keyFill,
 };
 
 // --------------------------------------------------------------- widget ----
@@ -419,7 +420,7 @@ const CSS = `
 .tschart-spacer{flex:1}
 .tschart-tagbtn{padding:4px 8px}
 .tschart-key{display:inline-flex;align-items:center;gap:5px;color:var(--ts-dim,#8a8a9a)}
-.tschart-key i{display:inline-block;width:10px;height:10px;border-radius:2px}
+.tschart-key i{display:inline-block;width:10px;height:10px;border-radius:2px;box-sizing:border-box}
 .tschart-body{position:relative;flex:1;min-height:0;touch-action:pan-y}
 .tschart-body svg{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
 .tschart-body text{fill:var(--ts-dim,#8a8a9a);font:11px system-ui,sans-serif}
@@ -449,6 +450,7 @@ const CSS = `
 @keyframes tschart-spin{to{transform:rotate(360deg)}}
 .tschart.panning .tschart-body{cursor:grabbing}
 .tschart-grid{stroke:var(--ts-grid,#2e2e3e);stroke-width:1}
+.tschart-plotbg{fill:var(--ts-plot-bg,var(--ts-panel,#1a1a2e))}
 .tschart-gutter{fill:var(--ts-panel,#1a1a2e);fill-opacity:.9}
 .tschart-cursor{stroke:var(--ts-dim,#8a8a9a);stroke-dasharray:4 4}
 .tschart-dot{stroke:var(--ts-panel,#1a1a2e);stroke-width:2}
@@ -465,6 +467,31 @@ function injectCss() {
     st.id = 'tschart-css';
     st.textContent = CSS;
     document.head.appendChild(st);
+}
+
+const PLOT_BG = 'var(--ts-plot-bg, var(--ts-panel, #1a1a2e))';
+let colorMixOk = null;
+
+/** Solid fill for a key: `strength` of its colour over the plot background
+ *  (null = the colour itself). Falls back to translucency without color-mix. */
+function keyFill(k) {
+    if (k.fillStrength === null) return { color: k.color, opacity: 1 };
+    if (colorMixOk === null) {
+        const css = globalThis.CSS;  // the module's CSS const shadows window.CSS
+        colorMixOk = !!(css && css.supports) &&
+            css.supports('color', 'color-mix(in srgb, red 50%, blue)');
+    }
+    if (!colorMixOk) {
+        const n = parseFloat(k.fillStrength);
+        return { color: k.color, opacity: isNaN(n) ? 0.2 : n / 100 };
+    }
+    return { color: `color-mix(in srgb, ${k.color} ${k.fillStrength}, ${PLOT_BG})`, opacity: 1 };
+}
+
+// 0.25 -> '25%'; strings ('25%', 'var(--x)') pass through.
+function strengthCss(v) {
+    if (v === undefined || v === null) return null;
+    return typeof v === 'number' ? `${Math.round(v * 1000) / 10}%` : String(v);
 }
 
 function h(tag, cls, text) {
@@ -599,15 +626,22 @@ class TsChart {
         return g ? g.visible : false;
     }
 
-    /** style 'fill' | 'hatch' */
-    addKey(id, label, color, style = 'fill') {
-        this.keys.push({ id, label, color, style });
+    /** opts: 'fill' | 'hatch', or {style, fillStrength}. fillStrength (0..1
+     *  or a CSS percentage such as '25%' / 'var(--x)') makes the key's fill
+     *  spans an opaque mix of its colour into the plot background, and the
+     *  swatch shows that same mix. */
+    addKey(id, label, color, opts = 'fill') {
+        const o = typeof opts === 'string' ? { style: opts } : (opts || {});
+        this.keys.push({ id, label, color, style: o.style || 'fill',
+                         fillStrength: strengthCss(o.fillStrength) });
         this._header();
+        this._dirty();
     }
 
     clearKeys() {
         this.keys = [];
         this._header();
+        this._dirty();
     }
 
     setEdgeText(before, after) {
@@ -698,8 +732,10 @@ class TsChart {
         this._overlay();
     }
 
-    /** spans: [{start, end (0/null = open), color, opacity, style 'fill'|'hatch',
-     *  minWidth}] drawn in setId order. */
+    /** spans: [{start, end (0/null = open), minWidth, key} or
+     *  {start, end, minWidth, color, opacity, style 'fill'|'hatch'}], drawn in
+     *  setId order. A keyed span takes colour, style and fill from its key;
+     *  spans naming an unknown key aren't drawn. */
     setSpans(setId, spans) {
         this.spans[setId] = (spans || []).slice();
         this._dirty();
@@ -802,6 +838,7 @@ class TsChart {
         this.svg = s('svg', { class: 'tschart-svg' }, this.body);
         this.defs = s('defs', {}, this.svg);
         this.clip = s('rect', {}, s('clipPath', { id: this.uid + '-clip' }, this.defs));
+        this.plotBg = s('rect', { class: 'tschart-plotbg' }, this.svg);
         this.stClip = s('g', { 'clip-path': `url(#${this.uid}-clip)` }, this.svg);
         this.stat = s('g', { class: 'tschart-static' }, this.stClip);
         this.dyn = s('g', { class: 'tschart-dyn' }, this.svg);
@@ -865,7 +902,8 @@ class TsChart {
                     sw.style.background = `repeating-linear-gradient(45deg, ${k.color} 0 2px, transparent 2px 5px)`;
                     sw.style.opacity = '0.8';
                 } else {
-                    sw.style.background = k.color;
+                    sw.style.background = keyFill(k).color;
+                    if (k.fillStrength !== null) sw.style.border = `1px solid ${k.color}`;
                 }
                 e.append(sw, document.createTextNode(k.label));
                 this.head.appendChild(e);
@@ -989,6 +1027,10 @@ class TsChart {
         this.clip.setAttribute('y', 0);
         this.clip.setAttribute('width', Math.max(0, plot.x2 - plot.x1));
         this.clip.setAttribute('height', H);
+        this.plotBg.setAttribute('x', plot.x1);
+        this.plotBg.setAttribute('y', plot.y1);
+        this.plotBg.setAttribute('width', Math.max(0, plot.x2 - plot.x1));
+        this.plotBg.setAttribute('height', Math.max(0, plot.y2 - plot.y1));
         this.geom = { W, H, plot, vis, slots, axes, xsBySrc };
     }
 
@@ -1003,10 +1045,19 @@ class TsChart {
         const ph = plot.y2 - plot.y1;
 
         // 1. spans
+        const keys = new Map(this.keys.map(k => [k.id, k]));
         this.spans.forEach((set, setId) => {
             if (!set) return;
             const sg = s('g', { class: 'tschart-spans', 'data-set': setId }, st);
-            for (const sp of set) {
+            for (let sp of set) {
+                if (sp.key) {
+                    const k = keys.get(sp.key);
+                    if (!k) continue;
+                    const f = keyFill(k);
+                    sp = { start: sp.start, end: sp.end, minWidth: sp.minWidth, style: k.style,
+                           color: k.style === 'hatch' ? k.color : f.color, opacity: f.opacity,
+                           key: k.id };
+                }
                 const e = sp.end || end;
                 if (e < start || sp.start > end) continue;
                 let x1 = xOf(sp.start), x2 = xOf(e);
@@ -1025,9 +1076,11 @@ class TsChart {
                                     class: 'tschart-span-start' }, sg);
                     }
                 } else {
-                    s('rect', { x: x1, y: plot.y1, width: w, height: ph, fill: sp.color,
-                                'fill-opacity': sp.opacity === undefined ? 0.2 : sp.opacity,
-                                class: 'tschart-span' }, sg);
+                    const r = s('rect', { x: x1, y: plot.y1, width: w, height: ph,
+                                          'fill-opacity': sp.opacity === undefined ? 0.2 : sp.opacity,
+                                          class: 'tschart-span', 'data-key': sp.key }, sg);
+                    // style, not the attribute: color-mix() with var() needs CSS parsing.
+                    r.style.fill = sp.color;
                 }
             }
         });

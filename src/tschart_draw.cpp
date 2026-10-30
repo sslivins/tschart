@@ -150,7 +150,16 @@ void draw_spans(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
     const lv_area_t &P = g.plot;
     for (const SpanSet &set : d->spans) {
         for (size_t i = 0; i < set.count; i++) {
-            const tschart_span_t &sp = set.spans[i];
+            tschart_span_t sp = set.spans[i];
+            const int8_t ki = set.key_idx[i];
+            if (ki == -2 || ki >= d->nkeys) continue;
+            if (ki >= 0) {
+                const Key &k = d->keys[ki];
+                sp.style = k.style;
+                sp.color = k.color;
+                sp.opa = LV_OPA_20;
+                if (k.style == TSCHART_SPAN_FILL) key_fill(c, k, &sp.color, &sp.opa);
+            }
             const uint32_t end = sp.end ? sp.end : d->end;
             if (sp.start > d->end || end < d->start) continue;
             int32_t x1 = map_x(LV_MAX(sp.start, d->start), d->start, d->end, P.x1, P.x2);
@@ -597,6 +606,16 @@ void draw_cursor(lv_obj_t *c, lv_layer_t *layer) {
 // ---- Shared helpers ----------------------------------------------------------------
 
 lv_color_t col_panel(lv_obj_t *c) { return lv_obj_get_style_bg_color(c, LV_PART_MAIN); }
+
+void key_fill(lv_obj_t *c, const Key &k, lv_color_t *color, lv_opa_t *opa) {
+    if (!k.fill_strength) {
+        *color = k.color;
+        *opa = LV_OPA_20;
+        return;
+    }
+    *color = lv_color_mix(k.color, col_panel(c), k.fill_strength);
+    *opa = LV_OPA_COVER;
+}
 lv_color_t col_grid(lv_obj_t *c) { return lv_obj_get_style_border_color(c, LV_PART_MAIN); }
 lv_color_t col_text(lv_obj_t *c) { return lv_obj_get_style_text_color(c, LV_PART_MAIN); }
 lv_color_t col_dim() { return lv_color_hex(0x888888); }

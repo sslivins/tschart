@@ -25,7 +25,12 @@ The original design and its review history are in [design.md](design.md).
 - **Groups** are the header chips. Each chip shows or hides its panes and
   layers. A pane with nothing visible collapses and the rest re-split by
   weight.
-- **Keys** are legend items for spans (`fill` or `hatch`).
+- **Keys** are legend items for spans (`fill` or `hatch`). A span can name
+  a key and take its colour and style from it. A fill key with a *fill
+  strength* draws its spans (and its swatch) as an opaque mix of that much
+  of its colour over the plot background, instead of a translucent band.
+  The band then looks like the legend on any background; a translucent warm
+  colour over a dark blue panel doesn't.
 - **Spans** are full-height bands in z-ordered sets (`fill` or `hatch` with
   a start line, plus a minimum width). **Notes** are labels above the plot;
   colliding notes merge into one label (shared text, or `×N`).
@@ -58,7 +63,7 @@ chart.addLayer(pane, { id, name, tag, source, value: sample => number|null,
   geom: 'line'|'step', interp: 'none'|'plateau', fill, fillOpacity, color, width, dash,
   inCursor, drivesRange });
 chart.addGroup({ id, label, color, swatch: 'line'|'fill', panes: [], layers: [] });
-chart.addKey(id, label, color, 'fill'|'hatch');
+chart.addKey(id, label, color, 'fill'|'hatch' | { style, fillStrength });  // 0.25 | '25%' | 'var(--x)'
 
 chart.setBounds(earliest, latest);
 chart.setDataset({ requestId, start, end,
@@ -66,7 +71,8 @@ chart.setDataset({ requestId, start, end,
   applied: () => { /* set spans, notes, status for this window */ } });   // false = stale
 chart.requestWindow(start, end);   // returns the request id
 chart.cancelPending();
-chart.setSpans(setId, [{ start, end, color, opacity, style: 'fill'|'hatch', minWidth }]);
+chart.setSpans(setId, [{ start, end, minWidth, key }                     // keyed
+                     | { start, end, minWidth, color, opacity, style: 'fill'|'hatch' }]);
 chart.setNotes([{ time, text, color }], prefix);
 chart.setStatus('ok'|'loading'|'empty'|'error', text);
 chart.setCard((info, card) => {      // info: {time, index, source, sample}
@@ -94,8 +100,10 @@ click or double tap emits *double-tap*. Vertical touch movement scrolls the
 page.
 
 Colours come from CSS variables, so a host theme can restyle the chart:
-`--ts-text`, `--ts-dim`, `--ts-grid`, `--ts-panel`, `--ts-card` and
-`--ts-danger`. Test hooks are `data-tschart-chip|pill|tag|edge|card|status`
+`--ts-text`, `--ts-dim`, `--ts-grid`, `--ts-panel`, `--ts-card`,
+`--ts-danger` and `--ts-plot-bg` (the plot background, default
+`--ts-panel`; must be opaque, keyed fills are mixed into it). Without CSS
+`color-mix()` keyed fills fall back to translucency. Test hooks are `data-tschart-chip|pill|tag|edge|card|status`
 attributes, plus `data-layer` on series groups.
 
 ## C API vs. the design sketch
@@ -110,7 +118,9 @@ The shipped `tschart.h` differs from [design.md](design.md) in these ways:
   `value_div`; formatters scale the values.
 - Card rows include a `BLOCK` kind (block swatch, coloured label).
   `tschart_card_add_layers()` places the layer rows.
-- Spans take `min_width` and a `FILL` or `HATCH` style. Notes take a label
+- Spans take `min_width` and a `FILL` or `HATCH` style, or a `key`
+  (resolved when set; add keys first). `tschart_key_set_fill_strength()`
+  mixes a key's fills over the chart's `bg_color`. Notes take a label
   prefix.
 - `tschart_set_small_font()`, `tschart_set_cursor_x()` (tests) and
   `tschart_get_group()`/`_get_id()` were added.

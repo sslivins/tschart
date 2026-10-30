@@ -161,3 +161,14 @@ test('groupNotes', () => {
     assert.equal(r.count, 3);
     assert.deepEqual(r.group, [0, 0, 2, 2, 4]);
 });
+
+test('key fill strength', () => {
+    assert.equal(L.strengthCss(0.25), '25%');
+    assert.equal(L.strengthCss('var(--s)'), 'var(--s)');
+    assert.equal(L.strengthCss(undefined), null);
+    // No color-mix (node has no CSS): plain colour at the strength as opacity.
+    assert.deepEqual(L.keyFill({ color: '#f97316', fillStrength: '40%' }),
+                     { color: '#f97316', opacity: 0.4 });
+    assert.deepEqual(L.keyFill({ color: '#f97316', fillStrength: null }),
+                     { color: '#f97316', opacity: 1 });
+});

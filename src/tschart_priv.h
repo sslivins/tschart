@@ -106,11 +106,14 @@ struct Key {
     char label[TEXT_LEN];
     lv_color_t color;
     tschart_span_style_t style;
+    lv_opa_t fill_strength;   /* 0 = not mixed */
     lv_obj_t *obj;
+    lv_obj_t *swatch;
 };
 
 struct SpanSet {
-    tschart_span_t *spans;
+    tschart_span_t *spans;    /* .key is replaced by key_idx */
+    int8_t *key_idx;          /* -1 = unkeyed */
     size_t count;
 };
 
@@ -231,6 +234,9 @@ bool cursor_bounds(lv_obj_t *c, lv_area_t *out);
 int32_t value_at(const tschart_layer &l, uint32_t t, size_t default_index,
                  bool default_src);
 lv_color_t col_panel(lv_obj_t *c);
+/** Fill colour/opa for a keyed FILL span (mixed over the panel). */
+void key_fill(lv_obj_t *c, const Key &k, lv_color_t *color, lv_opa_t *opa);
+void refresh_key_swatches(lv_obj_t *c);
 lv_color_t col_grid(lv_obj_t *c);
 lv_color_t col_text(lv_obj_t *c);
 lv_color_t col_dim();
