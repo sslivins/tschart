@@ -906,6 +906,7 @@ class TsChart {
                 this.needStatic = false;
                 this._layout();
                 this._drawStatic();
+                this._rehover();
             }
             this._drawOverlay();
         });
@@ -918,7 +919,18 @@ class TsChart {
         this.needStatic = false;
         this._layout();
         this._drawStatic();
+        this._rehover();
         this._drawOverlay();
+    }
+
+    // New data under a resting mouse: put the cursor back where it was.
+    _rehover() {
+        if (this.hoverX === null || this.hoverX === undefined || this.cursor ||
+            this.gesture || this.pending) return;
+        const c = this._cursorAt(this.hoverX);
+        if (!c) return;
+        this.cursor = c;
+        this._emit('cursor', { time: c.time, index: c.index });
     }
 
     _layerVisible(l) {
@@ -1384,6 +1396,7 @@ class TsChart {
             const gs = this.gesture;
             if (!gs) {
                 if (e.pointerType === 'mouse' && !this.spring) {
+                    this.hoverX = inPlot(p) ? p.x : null;
                     this._setCursor(inPlot(p) ? this._cursorAt(p.x) : null);
                 }
                 return;
@@ -1459,7 +1472,14 @@ class TsChart {
         b.addEventListener('pointerup', e => end(e, false));
         b.addEventListener('pointercancel', e => end(e, true));
         b.addEventListener('pointerleave', e => {
-            if (e.pointerType === 'mouse' && !this.gesture) this._setCursor(null);
+            if (e.pointerType === 'mouse' && !this.gesture) {
+                this.hoverX = null;
+                this._setCursor(null);
+            }
+        });
+        // Press-and-hold scrubs on touch; don't let it open the context menu.
+        b.addEventListener('contextmenu', e => {
+            if (this.gesture && this.gesture.type !== 'mouse') e.preventDefault();
         });
     }
 
