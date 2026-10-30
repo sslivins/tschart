@@ -54,5 +54,5 @@ Open `web/demo.html` in a browser to try every feature on synthetic data.
 
 ```sh
 cmake -S tests -B build && cmake --build build && ctest --test-dir build   # C logic
-node --test web/test                                                     # JS logic
+node --test web/test/*.test.js                                                # JS logic
 ```
