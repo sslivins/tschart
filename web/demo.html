@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tschart demo</title>
+<style>
+  body { margin: 0; padding: 16px; background: #10101c; color: #e6e6ef;
+         font: 14px system-ui, sans-serif; }
+  #chart { height: 420px; max-width: 900px; padding: 12px; border-radius: 12px;
+           background: #181828; }
+  #log { margin-top: 8px; color: #8a8a9a; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="chart"></div>
+<div id="log"></div>
+<script src="tschart.js"></script>
+<script>
+// Synthetic heat-pump history: 30 s samples, deci-degrees and watts, served
+// by a fake async backend so pan / pending / spring-back can be tried.
+const STEP = 30, NOW = Math.floor(Date.now() / 1000 / STEP) * STEP, DAYS = 2;
+const EARLIEST = NOW - DAYS * 86400;
+const C = { out: '#ff7a45', in: '#4dabf7', set: '#9c88ff', power: '#ffd43b',
+            heat: '#ff6b6b', cool: '#4dabf7', defrost: '#e9ecef', fault: '#ff5c5c' };
+const all = [];
+for (let t = EARLIEST; t <= NOW; t += STEP) {
+    const cyc = (t / 60) % 90, run = cyc < 35;
+    const ramp = run ? Math.min(1, cyc / 10) : Math.max(0, 1 - (cyc - 35) / 20);
+    const inl = Math.round(280 + 110 * ramp + 10 * Math.sin(t / 900));
+    all.push({ t, in: Math.round(inl / 10) * 10, out: Math.round((inl + (run ? 45 : 5)) / 10) * 10,
+               set: t % 86400 < 43200 ? 420 : 400, p: run ? Math.round(2600 + 600 * ramp) : 15 });
+}
+const faults = [{ start: NOW - 5400, end: NOW - 4800, code: 'P06' },
+                { start: NOW - 5300, end: NOW - 5000, code: 'P06' }];
+
+const chart = new TsChart(document.getElementById('chart'), {
+    id: 'demo', storageKey: 'tschart-demo',
+    edgeText: { before: 'Start of history', after: 'Now' },
+    panSnap: w => Math.min(900, w / 12),
+});
+const src = chart.addSource('telemetry');
+const fmtT = v => (v / 10).toFixed(Number.isInteger(v / 10) ? 0 : 1) + '°';
+const temps = chart.addPane({ id: 'temps', weight: 60, unit: '°C', color: C.out,
+    range: { auto: true, minSpan: 100, padPermille: 100, minPad: 20, minStep: 10 },
+    fmt: (v, ctx) => ctx === 'cursor' ? (v / 10).toFixed(1) + ' °C' : fmtT(v) });
+const power = chart.addPane({ id: 'power', weight: 40, unit: 'kW', color: C.power,
+    range: { auto: true, includeZero: true, hasMax: true, max: 1000, padPermille: 50, minStep: 100 },
+    fmt: (v, ctx) => (v / 1000).toFixed(ctx === 'axis' ? (v % 1000 ? 1 : 0) : 2) + (ctx === 'axis' ? '' : ' kW') });
+const lOut = chart.addLayer(temps, { id: 'outlet', name: 'Outlet', tag: 'out', color: C.out,
+    value: s => s.out, interp: 'plateau', width: 2.5 });
+const lIn = chart.addLayer(temps, { id: 'inlet', name: 'Inlet', tag: 'in', color: C.in,
+    value: s => s.in, interp: 'plateau', width: 2.5 });
+const lSet = chart.addLayer(temps, { id: 'setpoint', name: 'Setpoint', tag: 'set', color: C.set,
+    value: s => s.set, geom: 'step', dash: '6 4', width: 1.5 });
+const lP = chart.addLayer(power, { id: 'power', name: 'Power', tag: '', color: C.power,
+    value: s => s.p, geom: 'step', fill: true, fillOpacity: 0.3, width: 1.5 });
+chart.addGroup({ id: 'temps', label: 'Temps', color: C.out, panes: [temps] });
+chart.addGroup({ id: 'power', label: 'Power', color: C.power, swatch: 'fill', panes: [power] });
+chart.addKey('heat', 'Heating', C.heat);
+chart.addKey('defrost', 'Defrost', C.defrost);
+chart.addKey('fault', 'Fault', C.fault, 'hatch');
+chart.setBounds(EARLIEST, NOW);
+chart.setCard((info, card) => {
+    card.add('title', new Date(info.time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+    const run = info.sample.p > 100;
+    card.add('block', run ? 'Heating' : 'Idle', run ? '35 min' : '', run ? C.heat : '#8a8a9a');
+    card.addLayers();
+    for (const f of faults) if (info.time >= f.start && info.time <= f.end) card.add('warning', '⚠ ' + f.code);
+});
+
+function load(start, end, requestId) {
+    setTimeout(() => {
+        const samples = all.filter(s => s.t >= start - 300 && s.t <= end);
+        chart.setDataset({ requestId, start, end,
+            sources: { telemetry: { samples, time: 't', gap: 300 } },
+            applied: () => {
+                const runs = [];
+                let r = null;
+                for (const s of samples) {
+                    if (s.p > 100) { if (!r) r = { start: s.t, end: s.t }; r.end = s.t + STEP; }
+                    else if (r) { runs.push(r); r = null; }
+                }
+                if (r) runs.push(r);
+                chart.setSpans(0, runs.map(x => ({ ...x, color: C.heat, opacity: 0.18 })));
+                chart.setSpans(1, [{ start: NOW - 9000, end: NOW - 8700, color: C.defrost,
+                                     opacity: 0.4, minWidth: 3 }]);
+                chart.setSpans(2, faults.map(f => ({ start: f.start, end: f.end, color: C.fault,
+                                                     style: 'hatch' })));
+                chart.setNotes(faults.map(f => ({ time: f.start, text: f.code, color: C.fault })), '⚠ ');
+                chart.setStatus(samples.length ? 'ok' : 'empty', samples.length ? '' : 'No data');
+            } });
+    }, 400);
+}
+
+const root = document.getElementById('chart');
+const log = m => { document.getElementById('log').textContent = m; };
+root.addEventListener('tschart:window-request', e => {
+    log('request ' + JSON.stringify(e.detail));
+    load(e.detail.start, e.detail.end, e.detail.requestId);
+});
+root.addEventListener('tschart:double-tap', e => {
+    const w = chart.getWindow(), len = w.end - w.start;
+    const end = Math.min(NOW, Math.max(EARLIEST + len, Math.round(e.detail.time + len / 2)));
+    chart.requestWindow(end - len, end);
+});
+['group-toggled', 'axis-toggled', 'tags-toggled'].forEach(n =>
+    root.addEventListener('tschart:' + n, e => log(n + ' ' + JSON.stringify(e.detail))));
+load(NOW - 6 * 3600, NOW, 0);
+</script>
+</body>
+</html>
