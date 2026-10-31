@@ -277,7 +277,7 @@ void draw_lines(lv_obj_t *c, lv_layer_t *layer, const BarsGeo &g, int32_t lo, in
         const tsbars_series &sr = d->series[s];
         const tsbars_pane &p = *sr.pane;
         if (sr.cfg.geom != TSBARS_GEOM_LINE || !p.have) continue;
-        const lv_opa_t opa = sr.cfg.opa ? sr.cfg.opa : LV_OPA_60;
+        const lv_opa_t opa = sr.cfg.opa ? sr.cfg.opa : (lv_opa_t)LV_OPA_60;
         const int32_t w = sr.cfg.width ? sr.cfg.width : 2;
         bool prev = false;
         int32_t px = 0, py = 0;

@@ -24,3 +24,23 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+  lvgl:
+    # The widgets against LVGL 9.5 with the firmware's warnings as errors,
+    # plus a headless render test. Renders are uploaded for a look.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          repository: lvgl/lvgl
+          ref: v9.5.0
+          path: lvgl
+      - run: cmake -S tests/lvgl -B build-lvgl -DLVGL_DIR=$GITHUB_WORKSPACE/lvgl
+      - run: cmake --build build-lvgl --parallel
+      - run: ctest --test-dir build-lvgl --output-on-failure
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lvgl-renders
+          path: build-lvgl/render_*.bmp
+          if-no-files-found: ignore

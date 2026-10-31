@@ -55,4 +55,9 @@ Open `web/demo.html` in a browser to try every feature on synthetic data.
 ```sh
 cmake -S tests -B build && cmake --build build && ctest --test-dir build   # C logic
 npm ci && npm test                                  # JS logic + widget DOM tests (jsdom)
+# LVGL widgets: build against LVGL 9.5 and run the headless render test
+cmake -S tests/lvgl -B build-lvgl -DLVGL_DIR=<lvgl v9.5.0 checkout> && cmake --build build-lvgl && ctest --test-dir build-lvgl
 ```
+
+The render test writes each scene to `build-lvgl/render_*.bmp`; CI uploads
+them as the `lvgl-renders` artifact.
