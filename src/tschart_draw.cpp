@@ -210,7 +210,7 @@ void draw_time_axis(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
             const uint32_t t = d->end - age;
             const int32_t x = map_x(t, d->start, d->end, P.x1, P.x2);
             line(layer, x, P.y1, x, P.y2, col_grid(c), 1);
-            char label[24];
+            char label[48];
             if (age == 0) {
                 snprintf(label, sizeof(label), "%s", d->now_text);
             } else if (age % 86400 == 0) {

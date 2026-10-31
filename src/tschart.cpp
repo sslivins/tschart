@@ -942,7 +942,7 @@ void tschart_pane_set_range(tschart_pane_t *p, int32_t min, int32_t max, int32_t
     cfg.min = min;
     cfg.max = max;
     cfg.min_step = min_step;
-    tschart::invalidate_static(p->chart);
+    invalidate_static(p->chart);
 }
 
 void tschart_layer_set_names(tschart_layer_t *l, const char *name, const char *tag_name) {
