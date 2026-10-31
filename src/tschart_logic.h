@@ -129,6 +129,9 @@ uint32_t time_tick_step(uint32_t window, uint32_t max_intervals);
 // First tick at or after start, aligned to local midnight given start's
 // seconds since local midnight.
 uint32_t first_tick(uint32_t start, uint32_t step, uint32_t since_midnight);
+// Relative tick label for an age (s) back from the window end: "2 d", "4 h"
+// or "90 min" (whole days/hours when exact). Returns snprintf's length.
+int relative_label(uint32_t age, char* buf, size_t cap);
 
 // ---- Cursor ---------------------------------------------------------------
 
@@ -162,5 +165,8 @@ void bar_extent(int32_t x1, int32_t x2, int32_t permille, int32_t max_px,
 int32_t label_every(int32_t width, int32_t count, int32_t min_gap);
 // Whole slots a drag of dx px moves the view (positive = later buckets).
 int32_t pan_steps(int32_t dx, int32_t width, int32_t count);
+// Accumulator slot for bar series `index` (< max_series): unstacked bars use
+// their own index; stack ids share a slot in [max_series, 2 * max_series).
+int32_t stack_slot(uint8_t stack, uint8_t index, uint8_t max_series);
 
 }  // namespace tschart

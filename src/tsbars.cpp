@@ -113,9 +113,8 @@ lv_color_t panel_color(lv_obj_t *c) {
     return lv_color_black();
 }
 
-// Bars on their own use their series index; stacks the slots after them.
 int32_t stack_slot(const tsbars_series &sr, uint8_t s) {
-    return sr.cfg.stack ? TSBARS_MAX_SERIES + sr.cfg.stack % TSBARS_MAX_SERIES : s;
+    return tschart::stack_slot(sr.cfg.stack, s, TSBARS_MAX_SERIES);
 }
 
 bool value(const tsbars_series &s, const tsbars_bucket_t &b, int32_t *out) {

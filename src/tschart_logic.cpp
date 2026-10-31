@@ -1,5 +1,7 @@
 #include "tschart_logic.h"
 
+#include <stdio.h>
+
 namespace tschart {
 
 static int64_t floor_to(int64_t v, int64_t step) {
@@ -426,6 +428,16 @@ int32_t pan_steps(int32_t dx, int32_t width, int32_t count) {
     if (count <= 0 || width <= 0) return 0;
     const int64_t n = -(int64_t)dx * count;
     return (int32_t)(n >= 0 ? (n + width / 2) / width : -((-n + width / 2) / width));
+}
+
+int32_t stack_slot(uint8_t stack, uint8_t index, uint8_t max_series) {
+    return stack ? max_series + stack % max_series : index;
+}
+
+int relative_label(uint32_t age, char* buf, size_t cap) {
+    if (age % 86400 == 0) return snprintf(buf, cap, "%u d", (unsigned)(age / 86400));
+    if (age % 3600 == 0) return snprintf(buf, cap, "%u h", (unsigned)(age / 3600));
+    return snprintf(buf, cap, "%u min", (unsigned)(age / 60));
 }
 
 }  // namespace tschart

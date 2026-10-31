@@ -213,12 +213,8 @@ void draw_time_axis(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
             char label[48];
             if (age == 0) {
                 snprintf(label, sizeof(label), "%s", d->now_text);
-            } else if (age % 86400 == 0) {
-                snprintf(label, sizeof(label), "%u d", (unsigned)(age / 86400));
-            } else if (age % 3600 == 0) {
-                snprintf(label, sizeof(label), "%u h", (unsigned)(age / 3600));
             } else {
-                snprintf(label, sizeof(label), "%u min", (unsigned)(age / 60));
+                relative_label(age, label, sizeof(label));
             }
             time_label(c, layer, g, x, label);
         }

@@ -356,6 +356,28 @@ static void test_buckets() {
     CHECK_EQ(pan_steps(-26, 700, 14), 1);
     CHECK_EQ(pan_steps(74, 700, 14), -1);
     CHECK_EQ(pan_steps(75, 700, 14), -2);
+
+    CHECK_EQ(stack_slot(0, 3, 8), 3);
+    CHECK_EQ(stack_slot(1, 0, 8), 9);
+    CHECK_EQ(stack_slot(1, 5, 8), 9);
+    CHECK_EQ(stack_slot(2, 5, 8), 10);
+    CHECK_EQ(stack_slot(9, 2, 8), 9);
+}
+
+static void test_relative_label() {
+    char b[16];
+    relative_label(86400 * 2, b, sizeof(b));
+    CHECK(strcmp(b, "2 d") == 0);
+    relative_label(3600 * 4, b, sizeof(b));
+    CHECK(strcmp(b, "4 h") == 0);
+    relative_label(1800, b, sizeof(b));
+    CHECK(strcmp(b, "30 min") == 0);
+    relative_label(5400, b, sizeof(b));
+    CHECK(strcmp(b, "90 min") == 0);
+    relative_label(86400 + 3600, b, sizeof(b));
+    CHECK(strcmp(b, "25 h") == 0);
+    CHECK_EQ(relative_label(900, b, 4), 6);
+    CHECK(strcmp(b, "15 ") == 0);
 }
 
 int main() {
@@ -371,6 +393,7 @@ int main() {
     test_cursor();
     test_notes();
     test_buckets();
+    test_relative_label();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;
 }
