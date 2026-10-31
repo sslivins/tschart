@@ -1,1 +1,1 @@
-{"name":"tschart","private":true,"scripts":{"test":"node --test web/test/"},"devDependencies":{"jsdom":"^30.1.3"}}
+{"name":"tschart","private":true,"scripts":{"test":"node --test \"web/test/*.test.js\""},"devDependencies":{"jsdom":"^30.1.3"}}
