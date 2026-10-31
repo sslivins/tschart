@@ -42,6 +42,11 @@ The original design and its review history are in [design.md](design.md).
   applied on release. `cancel_pending` springs back.
 - **Toggles** (chips, axis gutter, end tags) emit events only when the user
   changes them; setters are silent so hosts can restore saved state.
+- **Fixed-window charts** (a "last 4 hours" summary) turn panning off
+  (a drag scrubs the cursor), or all input off so the host handles taps.
+  They can show the y labels permanently outside the plot, label time
+  relative to the window end ("4 h" … "now"), and add **reference lines**:
+  dashed horizontal lines with a label, such as a setpoint.
 
 ## Web API
 
@@ -54,6 +59,10 @@ const chart = new TsChart(element, {
   header: { chips: true, key: true, tagsButton: true },
   storageKey: 'my-chart',           // persist chips / axis / tags in localStorage
   metrics: { /* override TsChart.METRICS px values */ },
+  // Fixed-window charts (e.g. "last 4 hours"):
+  input: { pan: true, cursor: true },  // pan:false -> a drag scrubs; both false -> inert
+  axis: 'outside',                  // y labels always shown left of the plot, no pills
+  relativeTime: 'now',              // time labels "4 h" … "now" back from the window end
 });
 const src = chart.addSource('telemetry');
 const pane = chart.addPane({ id, weight, minHeight, unit, color, maxTicks,
@@ -74,6 +83,8 @@ chart.cancelPending();
 chart.setSpans(setId, [{ start, end, minWidth, key }                     // keyed
                      | { start, end, minWidth, color, opacity, style: 'fill'|'hatch' }]);
 chart.setNotes([{ time, text, color }], prefix);
+chart.setRefLines([{ pane, value, color, label }]);   // dashed setpoint lines, under the series
+chart.setPaneRange(pane, min, max, minStep);         // fixed scale, e.g. per mode
 chart.setStatus('ok'|'loading'|'empty'|'error', text);
 chart.setCard((info, card) => {      // info: {time, index, source, sample}
   card.add('title'|'block'|'text'|'value'|'warning', label, value, color);
@@ -134,7 +145,7 @@ range model, value formatters, status overlay and colours with tschart.
 const bars = new TsBars(element, {
   id: 'energy', count: 14, barWidth: 0.62, barMaxPx: 32,
   selectStyle: 'outline'|'fill',
-  labels: { text: (b, i) => '�', mode: 'every'|'sparse', minGap: 28 },
+  labels: { text: (b, i) => '�', mode: 'every'|'sparse', minGap: 28 },
   metrics: { /* gutter, right, top, labelH, paneGap, tickMinPx */ },
 });
 const kwh = bars.addPane({ id, weight, minHeight, unit, unitAt: 'top'|'middle', unitColor,
@@ -184,9 +195,15 @@ The shipped `tschart.h` differs from [design.md](design.md) in these ways:
   prefix.
 - `tschart_set_small_font()`, `tschart_set_cursor_x()` (tests) and
   `tschart_get_group()`/`_get_id()` were added.
+- `tschart_set_input()` (`TSCHART_INPUT_PAN | _CURSOR`),
+  `tschart_set_axis_outside()`, `tschart_set_relative_time(now_text)` and
+  `tschart_set_ref_lines()` (the design's `hline`: pane, value in display
+  units, colour, label; up to 4) serve fixed-window charts.
+  `tschart_pane_set_range()` switches a pane to a fixed scale after
+  creation (a scale that follows a mode).
 - The static cache is ARGB8888, not RGB565. Profiling counters are behind
   `CONFIG_TSCHART_PROFILE`.
-- `tschart_add_hline` and dataset `release` callbacks aren't implemented
+- Dataset `release` callbacks aren't implemented
   yet. The host keeps sample memory alive until the next `set_dataset`.
 
 Known numeric difference: plateau interpolation truncates to integers in C

@@ -14,6 +14,7 @@ static constexpr int32_t TIME_AXIS_H = 40;   // time labels under the plot
 static constexpr int32_t NOTE_STRIP_H = 38;  // fault codes above the plot
 static constexpr int32_t PANE_GAP = 10;
 static constexpr int32_t GUTTER_W = 66;      // open y axis
+static constexpr int32_t OUTSIDE_AXIS_W = 58; // y labels left of the plot
 static constexpr int32_t PAN_START_PX = 14;
 static constexpr int32_t CURSOR_SNAP_PX = 30;
 static constexpr uint32_t SPRING_MS = 180;
@@ -111,6 +112,13 @@ struct Key {
     lv_obj_t *swatch;
 };
 
+struct RefLine {
+    uint8_t pane;
+    int32_t value;
+    lv_color_t color;
+    char label[24];
+};
+
 struct SpanSet {
     tschart_span_t *spans;    /* .key is replaced by key_idx */
     int8_t *key_idx;          /* -1 = unkeyed */
@@ -167,7 +175,13 @@ struct Impl {
     lv_obj_t *tags_btn;
     char tags_btn_tag[TAG_LEN];
     bool axis_open;
+    bool axis_outside;
     bool end_tags;
+    uint8_t input;
+    bool rel_time;
+    char now_text[TEXT_LEN];
+    RefLine refs[TSCHART_MAX_REF_LINES];
+    uint8_t nrefs;
 
     tschart_status_t status;
     char status_text[64];

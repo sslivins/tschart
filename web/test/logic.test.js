@@ -203,3 +203,10 @@ test('bucket labels and pan', () => {
     assert.equal(L.panSteps(74, 700, 14), -1);
     assert.equal(L.panSteps(75, 700, 14), -2);
 });
+
+test('relativeLabel: days, hours, minutes back from the end', () => {
+    assert.equal(L.relativeLabel(86400 * 2), '2 d');
+    assert.equal(L.relativeLabel(3600 * 4), '4 h');
+    assert.equal(L.relativeLabel(1800), '30 min');
+    assert.equal(L.relativeLabel(5400), '90 min');
+});

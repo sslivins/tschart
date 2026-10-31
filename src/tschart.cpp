@@ -191,7 +191,7 @@ void update_pills(lv_obj_t *c) {
     for (uint8_t i = 0; i < d->npanes; i++) {
         tschart_pane &p = d->panes[i];
         if (!p.pill) continue;
-        if (!p.visible || !d->have_plot || p.slot.y2 <= p.slot.y1) {
+        if (!p.visible || !d->have_plot || p.slot.y2 <= p.slot.y1 || d->axis_outside) {
             lv_obj_add_flag(p.pill, LV_OBJ_FLAG_HIDDEN);
             continue;
         }
@@ -452,6 +452,7 @@ void on_press(lv_obj_t *c, lv_event_code_t code) {
             break;
     }
     if (!d->press_in_plot) return;
+    if (!(d->input & TSCHART_INPUT_CURSOR) && !(d->input & TSCHART_INPUT_PAN)) return;
     if (d->panning) {
         uint32_t ts, te;
         target_window(d, &ts, &te);
@@ -464,7 +465,7 @@ void on_press(lv_obj_t *c, lv_event_code_t code) {
         }
         return;
     }
-    if (!d->scrubbing && abs(point.x - d->x0) > PAN_START_PX) {
+    if ((d->input & TSCHART_INPUT_PAN) && !d->scrubbing && abs(point.x - d->x0) > PAN_START_PX) {
         set_cursor(c, -1);
         // Mid-load the old window's image, drawn moved into place, is what
         // slides; building now would draw stale data into the new window.
@@ -477,7 +478,7 @@ void on_press(lv_obj_t *c, lv_event_code_t code) {
             return;
         }
     }
-    if (!d->has_ds || loading(d)) return;
+    if (!d->has_ds || loading(d) || !(d->input & TSCHART_INPUT_CURSOR)) return;
     set_cursor(c, cursor_at(c, point.x));
 }
 
@@ -509,6 +510,7 @@ void constructor_cb(const lv_obj_class_t *, lv_obj_t *obj) {
     d->self = obj;
     d->cursor = -1;
     d->end_tags = true;
+    d->input = TSCHART_INPUT_PAN | TSCHART_INPUT_CURSOR;
     d->layout_dirty = true;
     d->small_font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
     lv_obj_remove_flag(obj, flags(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_SCROLL_MOMENTUM |
@@ -692,7 +694,8 @@ void layout(lv_obj_t *c) {
         top = h.y2 + 10;
     }
     if (d->nnotes) top += NOTE_STRIP_H;
-    d->plot = {coords.x1 + SIDE_PAD, top, coords.x2 - SIDE_PAD, coords.y2 - TIME_AXIS_H};
+    d->plot = {coords.x1 + (d->axis_outside ? OUTSIDE_AXIS_W : SIDE_PAD), top,
+               coords.x2 - SIDE_PAD, coords.y2 - TIME_AXIS_H};
     d->have_plot = d->plot.y2 > d->plot.y1 + 20;
 
     update_visibility(d);
@@ -926,6 +929,20 @@ tschart_layer_t *tschart_add_layer(tschart_pane_t *p, const tschart_layer_cfg_t 
 void tschart_pane_set_unit_tag(tschart_pane_t *p, const char *unit_tag) {
     copy_str(p->unit, sizeof(p->unit), unit_tag);
     update_pills(p->chart);
+}
+
+void tschart_pane_set_range(tschart_pane_t *p, int32_t min, int32_t max, int32_t min_step) {
+    tschart_pane_cfg_t &cfg = p->cfg;
+    if (!cfg.auto_range && cfg.has_min && cfg.has_max && cfg.min == min && cfg.max == max &&
+        cfg.min_step == min_step) {
+        return;
+    }
+    cfg.auto_range = false;
+    cfg.has_min = cfg.has_max = true;
+    cfg.min = min;
+    cfg.max = max;
+    cfg.min_step = min_step;
+    tschart::invalidate_static(p->chart);
 }
 
 void tschart_layer_set_names(tschart_layer_t *l, const char *name, const char *tag_name) {
@@ -1172,6 +1189,39 @@ void tschart_set_end_tags(lv_obj_t *c, bool on) {
 }
 
 bool tschart_get_end_tags(const lv_obj_t *c) { return impl(c)->end_tags; }
+
+void tschart_set_axis_outside(lv_obj_t *c, bool on) {
+    D(c)->axis_outside = on;
+    D(c)->layout_dirty = true;
+    invalidate_static(c);
+}
+
+void tschart_set_input(lv_obj_t *c, uint8_t flags) {
+    Impl *d = D(c);
+    d->input = flags;
+    if (!(flags & TSCHART_INPUT_CURSOR)) set_cursor(c, -1);
+}
+
+void tschart_set_relative_time(lv_obj_t *c, const char *now_text) {
+    Impl *d = D(c);
+    d->rel_time = now_text != nullptr;
+    copy_str(d->now_text, sizeof(d->now_text), now_text ? now_text : "");
+    invalidate_static(c);
+}
+
+void tschart_set_ref_lines(lv_obj_t *c, const tschart_ref_line_t *l, size_t n) {
+    Impl *d = D(c);
+    d->nrefs = 0;
+    for (size_t i = 0; i < n && d->nrefs < TSCHART_MAX_REF_LINES; i++) {
+        if (!l[i].pane) continue;
+        RefLine &r = d->refs[d->nrefs++];
+        r.pane = l[i].pane->index;
+        r.value = l[i].value;
+        r.color = l[i].color;
+        copy_str(r.label, sizeof(r.label), l[i].label ? l[i].label : "");
+    }
+    invalidate_static(c);
+}
 
 void tschart_card_add(tschart_card_t *card, tschart_row_kind_t kind, const char *label,
                       const char *value, lv_color_t color) {

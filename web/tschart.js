@@ -422,11 +422,18 @@ function panSteps(dx, width, count) {
     return n >= 0 ? idiv(n + idiv(width, 2), width) : -idiv(-n + idiv(width, 2), width);
 }
 
+// "N d" / "N h" / "N min" for a tick `age` seconds before the window end.
+function relativeLabel(age) {
+    if (age % 86400 === 0) return `${age / 86400} d`;
+    if (age % 3600 === 0) return `${age / 3600} h`;
+    return `${Math.floor(age / 60)} min`;
+}
+
 const logic = {
     niceAxis, autoRange, mapX, mapY, timeAt, interpolatePlateaus, decimate,
     splitPanes, ticksForHeight, placeTags, panLimits, rubberBand, panTarget,
     uncoveredPermille, timeTickStep, firstTick, nearestX, nearestTime, groupNotes,
-    strengthCss, keyFill, slotX, slotAt, barExtent, labelEvery, panSteps,
+    strengthCss, keyFill, slotX, slotAt, barExtent, labelEvery, panSteps, relativeLabel,
 };
 
 // --------------------------------------------------------------- widget ----
@@ -437,7 +444,7 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 // with options.metrics.
 const METRICS = {
     sidePad: 8, topPad: 6, timeAxisH: 22, noteStripH: 22, paneGap: 8,
-    gutterW: 52, panStartPx: 10, cursorSnapPx: 30, springMs: 180,
+    gutterW: 52, outsideAxisW: 44, panStartPx: 10, cursorSnapPx: 30, springMs: 180,
     doubleTapMs: 350, doubleTapAfterPanMs: 600, longPressMs: 450,
     noteLabelW: 70, cardMaxRows: 10, tickMinPx: 30, tagH: 18,
 };
@@ -491,6 +498,7 @@ const CSS = `
 .tschart-grid{stroke:var(--ts-grid,#2e2e3e);stroke-width:1}
 .tschart-plotbg{fill:var(--ts-plot-bg,var(--ts-panel,#1a1a2e))}
 .tschart-gutter{fill:var(--ts-panel,#1a1a2e);fill-opacity:.9}
+.tschart-ref-label{font-size:12px}
 .tschart-cursor{stroke:var(--ts-dim,#8a8a9a);stroke-dasharray:4 4}
 .tschart-dot{stroke:var(--ts-panel,#1a1a2e);stroke-width:2}
 .tschart-edge-line{stroke:var(--ts-dim,#8a8a9a);stroke-opacity:.6}
@@ -593,12 +601,18 @@ class TsChart {
      * @param {HTMLElement} root  element the chart fills (give it a height)
      * @param {object} opts  {id, timeFormat(t, step), edgeText:{before, after},
      *   panSnap (s or fn(windowSeconds)), header:{chips, key, tagsButton},
-     *   storageKey, metrics}
+     *   storageKey, metrics,
+     *   input:{pan, cursor} (both default true; without pan a drag moves the cursor),
+     *   axis:'outside' (y labels always shown left of the plot, no pills),
+     *   relativeTime: 'now' text -> labels counted back from the window end}
      */
     constructor(root, opts = {}) {
         injectCss();
         this.o = opts;
         this.m = Object.assign({}, METRICS, opts.metrics);
+        this.canPan = !(opts.input && opts.input.pan === false);
+        this.canCursor = !(opts.input && opts.input.cursor === false);
+        this.refLines = [];
         this.uid = 'tsc' + (++chartSeq);
         this.sources = [];
         this.panes = [];
@@ -813,6 +827,23 @@ class TsChart {
         this._dirty();
     }
 
+    /** lines: [{pane (id), value, color, label}] -- dashed horizontal lines
+     *  (setpoints) under the series, label at the right end above the line. */
+    /** Fixed scale min..max, ticks at least minStep apart (pane object or id). */
+    setPaneRange(pane, min, max, minStep = 1) {
+        const p = typeof pane === 'string' ? this.panes.find(x => x.id === pane) : pane;
+        if (!p) return;
+        const r = p.range;
+        if (r.auto === false && r.hasMin && r.hasMax && r.min === min && r.max === max && r.minStep === minStep) return;
+        p.range = Object.assign({}, p.range, { auto: false, hasMin: true, hasMax: true, min, max, minStep });
+        this._dirty();
+    }
+
+    setRefLines(lines) {
+        this.refLines = (lines || []).slice();
+        this._dirty();
+    }
+
     /** st: 'ok' | 'loading' | 'empty' | 'error' */
     setStatus(st, text = '') {
         this.status = { st, text };
@@ -904,6 +935,7 @@ class TsChart {
         this.defs = s('defs', {}, this.svg);
         this.clip = s('rect', {}, s('clipPath', { id: this.uid + '-clip' }, this.defs));
         this.plotBg = s('rect', { class: 'tschart-plotbg' }, this.svg);
+        this.axisG = s('g', { class: 'tschart-axis-out' }, this.svg);
         this.stClip = s('g', { 'clip-path': `url(#${this.uid}-clip)` }, this.svg);
         this.stat = s('g', { class: 'tschart-static' }, this.stClip);
         this.dyn = s('g', { class: 'tschart-dyn' }, this.svg);
@@ -1057,7 +1089,8 @@ class TsChart {
         if (!W || !H) { this.geom = null; return; }
         const m = this.m;
         const noteH = this._notesInWindow().length ? m.noteStripH : 0;
-        const plot = { x1: m.sidePad, x2: W - m.sidePad, y1: m.topPad + noteH, y2: H - m.timeAxisH };
+        const plot = { x1: this.o.axis === 'outside' ? m.outsideAxisW : m.sidePad, x2: W - m.sidePad,
+                       y1: m.topPad + noteH, y2: H - m.timeAxisH };
         const vis = this.panes.map(p => this._paneVisible(p));
         const slots = splitPanes(plot.y1, plot.y2, m.paneGap, this.panes.map(p => p.weight),
                                  this.panes.map(p => p.minHeight), vis);
@@ -1102,6 +1135,7 @@ class TsChart {
     _drawStatic() {
         const st = this.stat;
         st.textContent = '';
+        this.axisG.textContent = '';
         const g = this.geom;
         if (!g || !this.win) return;
         const { plot, slots, axes } = g;
@@ -1150,25 +1184,58 @@ class TsChart {
             }
         });
 
-        // 2. pane grid
+        // 2. pane grid (and the outside axis labels)
+        const outside = this.o.axis === 'outside';
         this.panes.forEach((p, i) => {
             if (!g.vis[i]) return;
             const a = axes[i], sl = slots[i];
             for (let v = a.lo; v <= a.hi; v += a.step) {
                 const y = mapY(v, a.lo, a.hi, sl.y1, sl.y2) + 0.5;
                 s('line', { x1: plot.x1, x2: plot.x2, y1: y, y2: y, class: 'tschart-grid' }, st);
+                if (!outside) continue;
+                const te = s('text', { x: plot.x1 - 6, y: y + 4, 'text-anchor': 'end',
+                                       class: 'tschart-axis' }, this.axisG);
+                te.style.fill = p.color;
+                te.textContent = p.fmt(v, 'axis');
             }
         });
 
         // 3. time axis
         const step = timeTickStep(end - start, Math.max(1, Math.floor((plot.x2 - plot.x1) / 110)));
         const fmt = this.o.timeFormat || defaultTimeFormat;
-        for (let t = firstTick(start, step, localSinceMidnight(start)); t <= end; t += step) {
-            const x = xOf(t) + 0.5;
+        const rel = this.o.relativeTime;
+        const ticks = [];
+        if (rel !== undefined && rel !== null) {
+            for (let age = 0; age <= end - start; age += step) {
+                ticks.unshift({ t: end - age, text: age === 0 ? rel : relativeLabel(age) });
+            }
+        } else {
+            for (let t = firstTick(start, step, localSinceMidnight(start)); t <= end; t += step) {
+                ticks.push({ t, text: fmt(t, step) });
+            }
+        }
+        for (const tk of ticks) {
+            const x = xOf(tk.t) + 0.5;
             s('line', { x1: x, x2: x, y1: plot.y1, y2: plot.y2, class: 'tschart-grid' }, st);
             const anchor = x - plot.x1 < 20 ? 'start' : (plot.x2 - x < 20 ? 'end' : 'middle');
             s('text', { x, y: plot.y2 + 15, 'text-anchor': anchor, class: 'tschart-time' }, st)
-                .textContent = fmt(t, step);
+                .textContent = tk.text;
+        }
+
+        // 3b. reference lines
+        for (const r of this.refLines) {
+            const i = this.panes.findIndex(p => p.id === r.pane);
+            if (i < 0 || !g.vis[i]) continue;
+            const a = axes[i], sl = slots[i];
+            const y = mapY(clamp(r.value, a.lo, a.hi), a.lo, a.hi, sl.y1, sl.y2);
+            const rg = s('g', { class: 'tschart-ref', 'data-pane': r.pane }, st);
+            s('line', { x1: plot.x1, x2: plot.x2, y1: y, y2: y, stroke: r.color || 'currentColor',
+                        'stroke-width': 2, 'stroke-dasharray': '6 6' }, rg);
+            if (r.label) {
+                const ty = y - 16 >= sl.y1 ? y - 5 : y + 14;
+                s('text', { x: plot.x2 - 4, y: ty, 'text-anchor': 'end',
+                            class: 'tschart-ref-label' }, rg).textContent = r.label;
+            }
         }
 
         // 4. series
@@ -1258,7 +1325,7 @@ class TsChart {
         if (this.win && this.dx) this._drawEdges();
 
         // gutter
-        if (this.axisOpen) {
+        if (this.axisOpen && this.o.axis !== 'outside') {
             const gx = plot.x1 + m.gutterW;
             s('rect', { x: plot.x1, y: plot.y1, width: m.gutterW, height: plot.y2 - plot.y1,
                         class: 'tschart-gutter' }, dyn);
@@ -1280,7 +1347,7 @@ class TsChart {
 
         // pills
         this.panes.forEach((p, i) => {
-            if (!g.vis[i] || !p.unit) return;
+            if (!g.vis[i] || !p.unit || this.o.axis === 'outside') return;
             // Kept across redraws: a hover redraw between mousedown and
             // mouseup would otherwise swallow the click.
             let b = this.pillEls.get(p.id);
@@ -1485,12 +1552,12 @@ class TsChart {
                             p.x >= this.geom.plot.x1 && p.x <= this.geom.plot.x2;
 
         b.addEventListener('pointerdown', e => {
-            if (e.button > 0 || !this.win) return;
+            if (e.button > 0 || !this.win || (!this.canPan && !this.canCursor)) return;
             const p = local(e);
             if (!inPlot(p)) return;
             this.gesture = { id: e.pointerId, type: e.pointerType, x0: p.x, y0: p.y,
                              base: this.dx, pan: false, long: false };
-            if (e.pointerType !== 'mouse') {
+            if (e.pointerType !== 'mouse' && this.canCursor) {
                 this.gesture.timer = setTimeout(() => {
                     const gs = this.gesture;
                     if (!gs || gs.pan) return;
@@ -1504,7 +1571,7 @@ class TsChart {
             const p = local(e);
             const gs = this.gesture;
             if (!gs) {
-                if (e.pointerType === 'mouse' && !this.spring) {
+                if (e.pointerType === 'mouse' && !this.spring && this.canCursor) {
                     const on = inPlot(p) && !(e.target.closest && e.target.closest('.tschart-pill'));
                     this.hoverX = on ? p.x : null;
                     this._setCursor(on ? this._cursorAt(p.x) : null);
@@ -1518,6 +1585,15 @@ class TsChart {
                 return;
             }
             if (!gs.pan) {
+                if (!this.canPan && Math.abs(dx) > this.m.panStartPx && Math.abs(dx) > Math.abs(dy)) {
+                    // No panning: a sideways drag scrubs instead.
+                    clearTimeout(gs.timer);
+                    if (!this.canCursor) { this.gesture = null; return; }
+                    gs.long = true;
+                    try { b.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+                    this._setCursor(this._cursorAt(p.x));
+                    return;
+                }
                 if (Math.abs(dx) > this.m.panStartPx && Math.abs(dx) > Math.abs(dy)) {
                     gs.pan = true;
                     clearTimeout(gs.timer);
@@ -1573,7 +1649,7 @@ class TsChart {
                 } else {
                     this.lastTap = now;
                     this.lastTapX = p.x;
-                    if (gs.type !== 'mouse') this._setCursor(this._cursorAt(p.x));
+                    if (gs.type !== 'mouse' && this.canCursor) this._setCursor(this._cursorAt(p.x));
                 }
             }
             this._overlay();

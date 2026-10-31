@@ -192,6 +192,9 @@ typedef struct {
 tschart_pane_t *tschart_add_pane(lv_obj_t *c, const tschart_pane_cfg_t *cfg);
 tschart_layer_t *tschart_add_layer(tschart_pane_t *p, const tschart_layer_cfg_t *cfg);
 void tschart_pane_set_unit_tag(tschart_pane_t *p, const char *unit_tag);
+/* Fixed scale min..max (display units), ticks at least min_step apart; for
+ * charts whose scale follows a mode, e.g. heating vs cooling. */
+void tschart_pane_set_range(tschart_pane_t *p, int32_t min, int32_t max, int32_t min_step);
 void tschart_layer_set_names(tschart_layer_t *l, const char *name, const char *tag_name);
 
 /* ---- Groups (chips) ------------------------------------------------------ */
@@ -258,6 +261,28 @@ void tschart_set_axis_open(lv_obj_t *c, bool open);  /* no event */
 bool tschart_get_axis_open(const lv_obj_t *c);
 void tschart_set_end_tags(lv_obj_t *c, bool on);     /* no event */
 bool tschart_get_end_tags(const lv_obj_t *c);
+/** Y labels always shown, in a gutter left of the plot (no pills). */
+void tschart_set_axis_outside(lv_obj_t *c, bool on);
+
+/* ---- Fixed-window charts ------------------------------------------------- */
+
+/** What touch does. Without PAN a drag moves the cursor; with neither, the
+ *  chart ignores presses so the host can handle LV_EVENT_CLICKED. */
+enum { TSCHART_INPUT_PAN = 1, TSCHART_INPUT_CURSOR = 2 };
+void tschart_set_input(lv_obj_t *c, uint8_t flags);  /* default PAN | CURSOR */
+/** Time labels counted back from the window end ("4 h" ... `now_text`)
+ *  instead of clock times; NULL turns it off. */
+void tschart_set_relative_time(lv_obj_t *c, const char *now_text);
+
+#define TSCHART_MAX_REF_LINES 4
+typedef struct {
+    tschart_pane_t *pane;
+    int32_t value;             /* display units */
+    lv_color_t color;
+    const char *label;         /* copied; NULL = none. Right end, above */
+} tschart_ref_line_t;
+/** Dashed horizontal lines (setpoints), drawn under the series. */
+void tschart_set_ref_lines(lv_obj_t *c, const tschart_ref_line_t *l, size_t n);
 
 /* ---- Cursor -------------------------------------------------------------- */
 

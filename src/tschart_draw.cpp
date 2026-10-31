@@ -182,12 +182,48 @@ void draw_spans(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
     }
 }
 
+// Label at tick x: centred, or tucked inside at the plot's ends.
+void time_label(lv_obj_t *c, lv_layer_t *layer, const Geo &g, int32_t x, const char *label) {
+    Impl *d = impl(c);
+    const lv_area_t &P = g.plot;
+    const int32_t y1 = P.y2 + 8;
+    if (x - P.x1 < 30) {
+        text(layer, {x, y1, x + 120, g.coords.y2}, label, col_dim(), LV_TEXT_ALIGN_LEFT,
+             d->small_font);
+    } else if (P.x2 - x < 30) {
+        text(layer, {x - 120, y1, x, g.coords.y2}, label, col_dim(), LV_TEXT_ALIGN_RIGHT,
+             d->small_font);
+    } else {
+        text(layer, {x - 60, y1, x + 60, g.coords.y2}, label, col_dim(), LV_TEXT_ALIGN_CENTER,
+             d->small_font);
+    }
+}
+
 void draw_time_axis(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
     Impl *d = impl(c);
     const lv_area_t &P = g.plot;
     const uint32_t window = d->end - d->start;
     const uint32_t step =
         time_tick_step(window, (uint32_t)LV_MAX(1, lv_area_get_width(&P) / 150));
+    if (d->rel_time) {
+        for (uint32_t age = 0; age <= window && step > 0; age += step) {
+            const uint32_t t = d->end - age;
+            const int32_t x = map_x(t, d->start, d->end, P.x1, P.x2);
+            line(layer, x, P.y1, x, P.y2, col_grid(c), 1);
+            char label[24];
+            if (age == 0) {
+                snprintf(label, sizeof(label), "%s", d->now_text);
+            } else if (age % 86400 == 0) {
+                snprintf(label, sizeof(label), "%u d", (unsigned)(age / 86400));
+            } else if (age % 3600 == 0) {
+                snprintf(label, sizeof(label), "%u h", (unsigned)(age / 3600));
+            } else {
+                snprintf(label, sizeof(label), "%u min", (unsigned)(age / 60));
+            }
+            time_label(c, layer, g, x, label);
+        }
+        return;
+    }
     const time_t st = d->start;
     struct tm tm = {};
     localtime_r(&st, &tm);
@@ -206,12 +242,51 @@ void draw_time_axis(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
 
 void draw_grid(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
     Impl *d = impl(c);
+    const int32_t lh = lv_font_get_line_height(d->small_font);
     for (uint8_t i = 0; i < d->npanes; i++) {
         const tschart_pane &p = d->panes[i];
         if (!p.visible || p.axis.step <= 0) continue;
         for (int32_t v = p.axis.lo; v <= p.axis.hi; v += p.axis.step) {
             const int32_t y = map_y(v, p.axis.lo, p.axis.hi, g.slot[i].y1, g.slot[i].y2);
             line(layer, g.plot.x1, y, g.plot.x2, y, col_grid(c), 1);
+            if (!d->axis_outside) continue;
+            char label[24];
+            fmt_value(p, v, TSCHART_FMT_AXIS, label, sizeof(label));
+            const int32_t ty = LV_CLAMP(g.slot[i].y1 - lh / 2, y - lh / 2, g.slot[i].y2 - lh / 2);
+            text(layer, {g.coords.x1, ty, g.plot.x1 - 8, ty + lh}, label, p.cfg.color,
+                 LV_TEXT_ALIGN_RIGHT, d->small_font);
+        }
+    }
+}
+
+void draw_ref_lines(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
+    Impl *d = impl(c);
+    const lv_area_t &P = g.plot;
+    for (uint8_t i = 0; i < d->nrefs; i++) {
+        const RefLine &r = d->refs[i];
+        const tschart_pane &p = d->panes[r.pane];
+        if (!p.visible || p.axis.hi <= p.axis.lo) continue;
+        const PaneSlot &s = g.slot[r.pane];
+        const int32_t y = map_y(LV_CLAMP(p.axis.lo, r.value, p.axis.hi), p.axis.lo, p.axis.hi,
+                                s.y1, s.y2);
+        lv_draw_line_dsc_t dsc;
+        lv_draw_line_dsc_init(&dsc);
+        dsc.color = r.color;
+        dsc.width = 2;
+        dsc.dash_width = 8;
+        dsc.dash_gap = 8;
+        dsc.p1.x = P.x1;
+        dsc.p1.y = y;
+        dsc.p2.x = P.x2;
+        dsc.p2.y = y;
+        lv_draw_line(layer, &dsc);
+        if (r.label[0]) {
+            const lv_font_t *font = d->small_font;
+            const int32_t lh = lv_font_get_line_height(font);
+            // Above the line, or below it when that would leave the pane.
+            const int32_t ty = y - lh - 4 >= s.y1 ? y - lh - 4 : y + 4;
+            text(layer, {P.x2 - 160, ty, P.x2 - 6, ty + lh}, r.label, col_dim(),
+                 LV_TEXT_ALIGN_RIGHT, font);
         }
     }
 }
@@ -353,6 +428,7 @@ void draw_static(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
     draw_spans(c, layer, g);
     draw_grid(c, layer, g);
     draw_time_axis(c, layer, g);
+    draw_ref_lines(c, layer, g);
     draw_series(c, layer, g);
     draw_notes(c, layer, g);
 }
@@ -777,7 +853,7 @@ void draw_main(lv_obj_t *c, lv_layer_t *layer) {
     } else if (!d->pending) {
         draw_static(c, layer, make_geo(c, 0, 0));
     }
-    if (d->axis_open) draw_gutter(c, layer);
+    if (d->axis_open && !d->axis_outside) draw_gutter(c, layer);
     if (d->end_tags && d->cursor < 0 && dx == 0 && !d->pending) draw_end_tags(c, layer);
     {
         d->prof.cached = cached;
