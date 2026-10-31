@@ -1164,7 +1164,7 @@ class TsChart {
                 const w = Math.max(1, x2 - x1);
                 if (sp.style === 'hatch') {
                     s('rect', { x: x1, y: plot.y1, width: w, height: ph, fill: sp.color,
-                                'fill-opacity': 0.1, class: 'tschart-span hatch' }, sg);
+                                'fill-opacity': 0.1, class: 'tschart-span hatch', 'data-key': sp.key }, sg);
                     if (w >= 8) {
                         s('rect', { x: x1, y: plot.y1, width: w, height: ph,
                                     fill: `url(#${this._hatch(sp.color)})` }, sg);
@@ -2304,7 +2304,12 @@ class TsBars {
 
     _springHome() {
         const from = this.dx, t0 = performance.now(), ms = this.m.springMs;
-        if (!from) { this.root.classList.remove('panning'); return; }
+        if (!from || typeof requestAnimationFrame === 'undefined') {
+            this.dx = 0;
+            this._applyShift();
+            this.root.classList.remove('panning');
+            return;
+        }
         const step = now => {
             const k = Math.min(1, (now - t0) / ms), r = (1 - k) * (1 - k);
             this.dx = Math.round(from * r);

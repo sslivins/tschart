@@ -20,5 +20,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: node --test web/test/*.test.js
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
