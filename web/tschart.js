@@ -563,7 +563,10 @@ function defaultTimeFormat(t, step) {
     return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
 }
 
-function localSinceMidnight(t) {
+// utcOffset(t) gives seconds east of UTC for the zone the ticks align to;
+// without it the browser's zone is used.
+function localSinceMidnight(t, utcOffset) {
+    if (utcOffset) return (((t + utcOffset(t)) % 86400) + 86400) % 86400;
     const d = new Date(t * 1000);
     return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
 }
@@ -599,7 +602,8 @@ function cardEl(rows, maxRows) {
 class TsChart {
     /**
      * @param {HTMLElement} root  element the chart fills (give it a height)
-     * @param {object} opts  {id, timeFormat(t, step), edgeText:{before, after},
+     * @param {object} opts  {id, timeFormat(t, step), utcOffset(t) (s east of UTC
+     *   that ticks align to; default the browser zone), edgeText:{before, after},
      *   panSnap (s or fn(windowSeconds)), header:{chips, key, tagsButton},
      *   storageKey, metrics,
      *   input:{pan, cursor} (both default true; without pan a drag moves the cursor),
@@ -1210,7 +1214,7 @@ class TsChart {
                 ticks.unshift({ t: end - age, text: age === 0 ? rel : relativeLabel(age) });
             }
         } else {
-            for (let t = firstTick(start, step, localSinceMidnight(start)); t <= end; t += step) {
+            for (let t = firstTick(start, step, localSinceMidnight(start, this.o.utcOffset)); t <= end; t += step) {
                 ticks.push({ t, text: fmt(t, step) });
             }
         }

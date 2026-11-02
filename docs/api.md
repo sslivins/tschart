@@ -54,6 +54,7 @@ The original design and its review history are in [design.md](design.md).
 const chart = new TsChart(element, {
   id: 'history',                    // data-tschart attribute
   timeFormat: (t, step) => '…',     // axis labels; default local h:mm / weekday
+  utcOffset: t => 3600 * -7,        // s east of UTC that ticks align to; default the browser zone
   edgeText: { before: 'Start of history', after: 'Now' },
   panSnap: w => Math.min(900, w / 12),   // seconds, or fn(windowSeconds)
   header: { chips: true, key: true, tagsButton: true },
