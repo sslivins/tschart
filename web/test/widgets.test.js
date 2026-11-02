@@ -207,6 +207,15 @@ test('a drag pans back in time when panning is on', () => {
     assert.equal(c.setDataset({ requestId: r.requestId + 1, start: r.start, end: r.end, sources: {} }), false);
 });
 
+test('utcOffset aligns time ticks to that zone', () => {
+    const at = [];
+    const opts = { relativeTime: undefined, timeFormat: (t, step) => { at.push([t, step]); return ''; } };
+    const { c } = homeChart(Object.assign({ utcOffset: () => -7 * 3600 + 1800 }, opts));
+    load(c);
+    assert.ok(at.length > 1);
+    for (const [t, step] of at) assert.equal((t - 7 * 3600 + 1800) % step, 0, `tick ${t} on a ${step}s step`);
+});
+
 test('with the cursor off, hover shows nothing', () => {
     const { env, c } = homeChart({ input: { cursor: false } });
     load(c);
