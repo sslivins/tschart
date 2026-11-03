@@ -207,6 +207,20 @@ test('a drag pans back in time when panning is on', () => {
     assert.equal(c.setDataset({ requestId: r.requestId + 1, start: r.start, end: r.end, sources: {} }), false);
 });
 
+test('on touch a drag scrubs even when panning is on', () => {
+    const { env, c } = homeChart({ relativeTime: undefined, timeFormat: () => '' });
+    c.setBounds(START - 86400, END);
+    load(c);
+    const requests = [];
+    env.root.addEventListener('tschart:window-request', e => requests.push(e.detail));
+    const plot = c.getPlotArea();
+    drag(env, c.body, plot.x1 + 50, plot.y1 + 20, plot.x1 + 250, { pointerType: 'touch' });
+    c.flush();
+    assert.equal(requests.length, 0);
+    assert.deepEqual({ ...c.getWindow() }, { start: START, end: END });
+    assert.ok(env.root.querySelector('.tschart-card'), 'scrub leaves the cursor card up');
+});
+
 test('utcOffset aligns time ticks to that zone', () => {
     const at = [];
     const opts = { relativeTime: undefined, timeFormat: (t, step) => { at.push([t, step]); return ''; } };
@@ -385,6 +399,24 @@ test('dragging pans by whole days and stops at the newest', () => {
     drag(env, b.body, plot.x2 - 20, y, plot.x2 - 20 - slot * 2);
     assert.equal(views.length, n, 'no view change past the newest day');
     assert.equal(b.getView().lastKey, 'd5');
+});
+
+test('on touch a drag scrubs the day card and selects where it ends', () => {
+    const { env, b } = energy();
+    b.setCard((bk, card) => card.add('title', `Day ${bk.label}`));
+    const views = [], picks = [];
+    env.root.addEventListener('tsbars:view', e => views.push(e.detail));
+    env.root.addEventListener('tsbars:select', e => picks.push(e.detail.key));
+    const plot = b.getPlotArea(), slot = (plot.x2 - plot.x1) / 4, y = plot.y1 + 20;
+    const touch = { pointerType: 'touch' };
+    pointer(env, b.body, 'pointerdown', plot.x1 + slot * 0.5, y, touch);
+    pointer(env, b.body, 'pointermove', plot.x1 + slot * 2.5, y, touch);
+    assert.equal(env.root.querySelector('.tschart-card .title').textContent, 'Day 4');
+    pointer(env, b.body, 'pointerup', plot.x1 + slot * 2.5, y, touch);
+    assert.equal(views.length, 0, 'no pan');
+    assert.equal(b.getView().lastKey, 'd5');
+    assert.deepEqual(picks, ['d4']);
+    assert.equal(env.root.querySelector('.tschart-card'), null);
 });
 
 test('mouse hover shows the card for the day under the pointer', () => {
