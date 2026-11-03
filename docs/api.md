@@ -106,8 +106,9 @@ Events are `CustomEvent`s that bubble from the element:
 | `tschart:axis-toggled`, `tschart:tags-toggled` | `{on}` |
 | `tschart:cursor` | `{time, index}` or `null` |
 
-Input: a mouse hover moves the cursor. A horizontal drag (mouse or touch)
-pans. A touch tap places the cursor and a long press scrubs. A double
+Input: a mouse hover moves the cursor and a horizontal mouse drag pans. On
+touch a tap places the cursor and a horizontal drag scrubs; touch never
+pans, so the host should offer buttons to move the window. A double
 click or double tap emits *double-tap*. Vertical touch movement scrolls the
 page.
 
@@ -134,13 +135,14 @@ range model, value formatters, status overlay and colours with tschart.
   axes fit the buckets in view, so they hold still during a drag.
 - **Series** are `bar` (stacked by a shared `stack` id, in series order) or
   `line` (through slot centres, broken at missing values, optional dots).
-- **View**: `count` buckets are in view. A sideways drag pans by whole
+- **View**: `count` buckets are in view. A sideways mouse drag pans by whole
   buckets with the neighbours already drawn, rubber-bands at the loaded
   ends or the host's pan limits, and emits *view* with the step count once
   it settles. The host reloads around the new view and calls `setBuckets`
   again keeping it.
 - **Selection**: a tap on a selectable bucket selects it (outline or fill)
-  and emits *select*.
+  and emits *select*. A sideways touch drag scrubs the card across buckets
+  and selects the one it ends on.
 
 ```js
 const bars = new TsBars(element, {

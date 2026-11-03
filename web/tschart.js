@@ -1589,8 +1589,10 @@ class TsChart {
                 return;
             }
             if (!gs.pan) {
-                if (!this.canPan && Math.abs(dx) > this.m.panStartPx && Math.abs(dx) > Math.abs(dy)) {
-                    // No panning: a sideways drag scrubs instead.
+                // Touch drags scrub (the page's buttons move the window), as
+                // do drags on charts that can't pan; only a mouse drag pans.
+                const scrubs = !this.canPan || (gs.type !== 'mouse' && this.canCursor);
+                if (scrubs && Math.abs(dx) > this.m.panStartPx && Math.abs(dx) > Math.abs(dy)) {
                     clearTimeout(gs.timer);
                     if (!this.canCursor) { this.gesture = null; return; }
                     gs.long = true;
@@ -1667,7 +1669,7 @@ class TsChart {
                 this._setCursor(null);
             }
         });
-        // Press-and-hold scrubs on touch; don't let it open the context menu.
+        // Touch scrubs; don't let a press-and-hold open the context menu.
         b.addEventListener('contextmenu', e => {
             if (this.gesture && this.gesture.type !== 'mouse') e.preventDefault();
         });
@@ -2252,8 +2254,19 @@ class TsBars {
             }
             if (e.pointerId !== gs.id) return;
             const dx = p.x - gs.x0, dy = p.y - gs.y0;
+            if (gs.scrub) {
+                this._hover(inPlot(p) ? p.x : null);
+                return;
+            }
             if (!gs.pan) {
                 const start = gs.touch ? this.m.panStartTouchPx : this.m.panStartMousePx;
+                if (gs.touch && Math.abs(dx) > start && Math.abs(dx) > Math.abs(dy)) {
+                    // Touch drags scrub the day card; the page's buttons pan.
+                    gs.scrub = true;
+                    try { b.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+                    this._hover(p.x);
+                    return;
+                }
                 if (Math.abs(dx) > start && Math.abs(dx) > Math.abs(dy)) {
                     gs.pan = true;
                     gs.lim = this._limits();
@@ -2274,6 +2287,7 @@ class TsBars {
             const gs = this.gesture;
             if (!gs || e.pointerId !== gs.id) return;
             this.gesture = null;
+            if (gs.scrub) this._hover(null);
             if (!gs.pan) {
                 if (cancelled || !this.geom) return;
                 const p = local(e), g = this.geom;
