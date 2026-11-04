@@ -55,6 +55,33 @@ test('setPaneRange moves the scale', () => {
     assert.deepEqual(texts($$(env.root, '.tschart-axis-out text')), ['0°', '10°', '20°', '30°', '40°']);
 });
 
+// The test DOM measures text at 7 px per character.
+test('the outside axis is only as wide as its labels', () => {
+    const { env, c } = homeChart();
+    load(c);
+    const plotX = () => num(env.root.querySelector('.tschart-plotbg'), 'x');
+    assert.equal(plotX(), 3 * 7 + 10, '"60°" plus gap and margin');
+    c.setPaneRange('temp', 0, 12000, 3000);
+    c.flush();
+    assert.equal(plotX(), 5 * 7 + 10, '"1200°" widens it');
+});
+
+test('the open axis gutter fits its labels', () => {
+    const env = setup();
+    const c = new env.TsChart(env.root, { id: 'h', relativeTime: 'now' });
+    c.addSource('s');
+    const pane = c.addPane({ id: 'temp', unit: '°C', fmt: (v, ctx) => `${v / 10}°` });
+    c.addLayer(pane, { id: 'tank', name: 'Tank', value: s => s.v, color: '#fff' });
+    c.setPaneRange('temp', 200, 600, 100);
+    load(c);
+    c.setAxisOpen(true);
+    c.flush();
+    const gutter = env.root.querySelector('.tschart-gutter');
+    assert.equal(num(gutter, 'width'), 3 * 7 + 10, '"60°" plus gap and margin');
+    const pill = env.root.querySelector('.tschart-pill');
+    assert.equal(parseFloat(pill.style.left), num(gutter, 'x') + 4 + 3 * 7 + 10, 'pill sits past it');
+});
+
 test('relative time labels count back from the window end, oldest first', () => {
     const { env, c } = homeChart();
     load(c);
@@ -221,6 +248,64 @@ test('on touch a drag scrubs even when panning is on', () => {
     assert.ok(env.root.querySelector('.tschart-card'), 'scrub leaves the cursor card up');
 });
 
+// Captures the widgets' timers so a test can say when a touch has been held.
+function holdClock(env) {
+    let pending = [];
+    env.window.setTimeout = fn => pending.push(fn);
+    env.window.clearTimeout = id => { pending[id - 1] = null; };
+    return () => { const due = pending; pending = []; due.forEach(fn => fn && fn()); };
+}
+
+test('a touch puts the cursor down where it lands', () => {
+    const { env, c } = homeChart();
+    load(c);
+    holdClock(env);
+    const plot = c.getPlotArea();
+    pointer(env, c.body, 'pointerdown', plot.x1 + 80, plot.y1 + 20, { pointerType: 'touch' });
+    c.flush();
+    assert.ok(env.root.querySelector('.tschart-card'), 'cursor up before any move');
+});
+
+test('on touch a hold then a drag pans back in time', () => {
+    const { env, c } = homeChart({ relativeTime: undefined, timeFormat: () => '' });
+    c.setBounds(START - 86400, END);
+    load(c);
+    const held = holdClock(env);
+    const requests = [];
+    env.root.addEventListener('tschart:window-request', e => requests.push(e.detail));
+    const plot = c.getPlotArea(), hour = (plot.x2 - plot.x1) / 4, y = plot.y1 + 20;
+    const touch = { pointerType: 'touch' };
+    pointer(env, c.body, 'pointerdown', plot.x1 + 50, y, touch);
+    pointer(env, c.body, 'pointermove', plot.x1 + 53, y, touch);  // a little jitter
+    held();
+    c.flush();
+    assert.ok(env.root.classList.contains('holding'), 'the plot tints');
+    assert.equal(env.root.querySelector('.tschart-card'), null, 'the cursor makes way');
+    for (let i = 1; i <= 6; i++) pointer(env, c.body, 'pointermove', plot.x1 + 53 + hour * i / 6, y, touch);
+    pointer(env, c.body, 'pointerup', plot.x1 + 53 + hour, y, touch);
+    c.flush();
+    assert.equal(requests.length, 1);
+    assert.ok(Math.abs(requests[0].end - (END - 3600)) <= 300, `about an hour back, got ${END - requests[0].end}s`);
+    assert.ok(!env.root.classList.contains('holding'));
+});
+
+test('a held touch that never moves keeps its cursor', () => {
+    const { env, c } = homeChart();
+    c.setBounds(START - 86400, END);
+    load(c);
+    const held = holdClock(env);
+    const requests = [];
+    env.root.addEventListener('tschart:window-request', e => requests.push(e.detail));
+    const plot = c.getPlotArea();
+    pointer(env, c.body, 'pointerdown', plot.x1 + 80, plot.y1 + 20, { pointerType: 'touch' });
+    held();
+    pointer(env, c.body, 'pointerup', plot.x1 + 80, plot.y1 + 20, { pointerType: 'touch' });
+    c.flush();
+    assert.equal(requests.length, 0);
+    assert.ok(env.root.querySelector('.tschart-card'), 'cursor back up');
+    assert.ok(!env.root.classList.contains('holding'));
+});
+
 test('utcOffset aligns time ticks to that zone', () => {
     const at = [];
     const opts = { relativeTime: undefined, timeFormat: (t, step) => { at.push([t, step]); return ''; } };
@@ -344,6 +429,13 @@ test('the axis follows the stacked totals', () => {
     assert.ok(kwhTicks.at(-1) >= 6.5);
 });
 
+test('the bar axis is only as wide as its labels and units', () => {
+    const { env } = energy();
+    const clip = env.root.querySelector('clipPath rect');
+    // Widest is "kWh"/"COP"/"2.9" at 3 characters, plus 8 px gap and 4 px margin.
+    assert.equal(num(clip, 'x'), 3 * 7 + 12);
+});
+
 test('the COP line breaks at a day without data', () => {
     const { env } = energy();
     const d = env.root.querySelector('.tsbars-line[data-series="cop"]').getAttribute('d');
@@ -417,6 +509,30 @@ test('on touch a drag scrubs the day card and selects where it ends', () => {
     assert.equal(b.getView().lastKey, 'd5');
     assert.deepEqual(picks, ['d4']);
     assert.equal(env.root.querySelector('.tschart-card'), null);
+});
+
+test('on touch a hold then a drag pans by days; a still hold selects', () => {
+    const { env, b } = energy();
+    const held = holdClock(env);
+    const views = [], picks = [];
+    env.root.addEventListener('tsbars:view', e => views.push(e.detail));
+    env.root.addEventListener('tsbars:select', e => picks.push(e.detail.key));
+    const plot = b.getPlotArea(), slot = (plot.x2 - plot.x1) / 4, y = plot.y1 + 20;
+    const touch = { pointerType: 'touch' };
+    pointer(env, b.body, 'pointerdown', plot.x1 + 20, y, touch);
+    held();
+    for (let i = 1; i <= 6; i++) pointer(env, b.body, 'pointermove', plot.x1 + 20 + slot * 2.2 * i / 6, y, touch);
+    pointer(env, b.body, 'pointerup', plot.x1 + 20 + slot * 2.2, y, touch);
+    assert.equal(views.length, 1);
+    assert.equal(views[0].steps, -2);
+    assert.deepEqual(picks, []);
+
+    pointer(env, b.body, 'pointerdown', plot.x1 + slot * 1.5, y, touch);
+    held();
+    pointer(env, b.body, 'pointerup', plot.x1 + slot * 1.5, y, touch);
+    assert.equal(views.length, 1, 'no pan');
+    assert.equal(picks.length, 1);
+    assert.ok(!env.root.classList.contains('holding'));
 });
 
 test('mouse hover shows the card for the day under the pointer', () => {

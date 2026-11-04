@@ -60,7 +60,9 @@ struct BarsImpl {
     char status_text[64];
     // Gesture
     int32_t x0, dx;
-    bool panning, springing, moved, press_in_plot;
+    int32_t axis_w;  // fitted y axis width, from the last draw (0: none yet)
+    bool panning, scrubbing, holding, springing, moved, press_in_plot;
+    uint32_t press_ms;
     PanLimits lim;
 };
 
@@ -93,7 +95,8 @@ bool geo(const lv_obj_t *c, BarsGeo *g) {
     const BarsImpl *d = D(c);
     lv_obj_get_coords(c, &g->coords);
     const tsbars_metrics_t &m = d->m;
-    g->plot = {g->coords.x1 + m.gutter, g->coords.y1 + m.top, g->coords.x2 - m.right,
+    const int32_t gutter = m.gutter > 0 ? m.gutter : (d->axis_w > 0 ? d->axis_w : 64);
+    g->plot = {g->coords.x1 + gutter, g->coords.y1 + m.top, g->coords.x2 - m.right,
                g->coords.y2 - m.label_h};
     g->pw = lv_area_get_width(&g->plot);
     g->n = d->count;
@@ -176,12 +179,30 @@ int32_t y_of(const tsbars_pane &p, int32_t v) {
     return map_y(v, p.axis.lo, p.axis.hi, p.slot.y1, p.slot.y2);
 }
 
+// Widest y label or unit over the panes, plus its gap and margin.
+int32_t axis_width(const BarsImpl *d) {
+    int32_t w = 0;
+    for (uint8_t k = 0; k < d->npanes; k++) {
+        const tsbars_pane &p = d->panes[k];
+        if (p.unit[0]) w = LV_MAX(w, text_w(p.unit, d->small_font));
+        if (!p.have || p.axis.step <= 0) continue;
+        for (int32_t v = p.axis.lo; v <= p.axis.hi; v += p.axis.step) {
+            const bool end = v == p.axis.lo || v + p.axis.step > p.axis.hi;
+            if (p.cfg.ends_only && !end) continue;
+            char buf[16];
+            fmt(p, v, buf, sizeof(buf));
+            w = LV_MAX(w, text_w(buf, d->small_font));
+        }
+    }
+    return LV_MAX(AXIS_MIN_W, w + AXIS_LABEL_GAP + AXIS_MARGIN);
+}
+
 void draw_axes(lv_obj_t *c, lv_layer_t *layer, const BarsGeo &g) {
     BarsImpl *d = D(c);
     const lv_font_t *font = d->small_font;
     const lv_color_t grid = col_grid(c);
     const int32_t fh = lv_font_get_line_height(font);
-    const int32_t gx1 = g.coords.x1 + 4, gx2 = g.plot.x1 - 8;
+    const int32_t gx1 = g.coords.x1 + AXIS_MARGIN, gx2 = g.plot.x1 - AXIS_LABEL_GAP;
     for (uint8_t k = 0; k < d->npanes; k++) {
         const tsbars_pane &p = d->panes[k];
         const int32_t mid = (p.slot.y1 + p.slot.y2) / 2;
@@ -314,6 +335,15 @@ void draw_main(lv_obj_t *c, lv_layer_t *layer) {
     BarsGeo g;
     if (!geo(c, &g)) return;
     fit(c, g);
+    if (d->m.gutter <= 0) {
+        // The axis takes only the width its labels need; the panes' heights
+        // (and so the axes) don't depend on it.
+        const int32_t w = axis_width(d);
+        if (w != d->axis_w) {
+            d->axis_w = w;
+            if (!geo(c, &g)) return;
+        }
+    }
     draw_axes(c, layer, g);
 
     const lv_area_t saved = layer->_clip_area;
@@ -361,6 +391,8 @@ void draw_main(lv_obj_t *c, lv_layer_t *layer) {
         draw_lines(c, layer, g, lo, hi);
     }
     layer->_clip_area = saved;
+    // A held touch has picked the bars up to pan: tint the plot to say so.
+    if (d->holding) rect(layer, {g.plot.x1, g.plot.y1, g.plot.x2, g.plot.y2}, lv_color_white(), LV_OPA_10);
 
     if (d->status != TSCHART_STATUS_OK && d->status_text[0]) {
         const lv_font_t *font = lv_obj_get_style_text_font(c, LV_PART_MAIN);
@@ -444,6 +476,19 @@ void pan_end(lv_obj_t *c, bool apply) {
     }
 }
 
+// Selects the bucket under x if it can be selected (and, scrubbing, isn't already).
+void select_at(lv_obj_t *c, int32_t x, bool again) {
+    BarsImpl *d = D(c);
+    const int32_t i = tsbars_index_at(c, x);
+    if (i < 0) return;
+    const tsbars_bucket_t &b = d->buckets[i];
+    if (!(b.flags & TSBARS_SELECTABLE) || (!again && b.key == d->selected)) return;
+    d->selected = b.key;
+    lv_obj_invalidate(c);
+    tsbars_select_t ev = {b.key, i, &b};
+    lv_obj_send_event(c, TSBARS_EVENT_SELECT, &ev);
+}
+
 void on_press(lv_obj_t *c, lv_event_code_t code) {
     BarsImpl *d = D(c);
     lv_indev_t *indev = lv_indev_active();
@@ -457,14 +502,21 @@ void on_press(lv_obj_t *c, lv_event_code_t code) {
             spring_stop(d);
             d->x0 = pt.x;
             d->dx = 0;
-            d->panning = false;
+            d->panning = d->scrubbing = d->holding = false;
             d->moved = false;
+            d->press_ms = lv_tick_get();
             d->press_in_plot = have && pt.x >= g.plot.x1 && pt.x <= g.plot.x2 &&
                                pt.y >= g.plot.y1;
             lv_obj_invalidate(c);
             return;
         case LV_EVENT_RELEASED:
         case LV_EVENT_PRESS_LOST:
+            // A hold that never moved is a long tap: let the click select.
+            if (d->holding) {
+                d->moved = d->dx != 0;
+                lv_obj_invalidate(c);
+            }
+            d->holding = false;
             pan_end(c, code == LV_EVENT_RELEASED);
             return;
         default:
@@ -472,10 +524,17 @@ void on_press(lv_obj_t *c, lv_event_code_t code) {
     }
     if (!d->press_in_plot || !have) return;
     if (!d->panning) {
-        if (LV_ABS(pt.x - d->x0) <= PAN_START_PX || !d->nbuckets) return;
-        d->panning = d->moved = true;
+        // A drag scrubs the selection; holding still first pans.
+        if (!d->scrubbing && LV_ABS(pt.x - d->x0) > PAN_START_PX) d->scrubbing = d->moved = true;
+        if (d->scrubbing) {
+            select_at(c, pt.x, false);
+            return;
+        }
+        if (lv_tick_elaps(d->press_ms) < HOLD_PAN_MS || !d->nbuckets) return;
+        d->panning = d->holding = true;
         d->x0 = pt.x;  // start sliding from here, no jump
         d->lim = limits(d, g);
+        lv_obj_invalidate(c);
         return;
     }
     const int32_t dx = rubber_band(pt.x - d->x0, d->lim);
@@ -492,14 +551,7 @@ void on_click(lv_obj_t *c) {
     if (indev == nullptr) return;
     lv_point_t pt;
     lv_indev_get_point(indev, &pt);
-    const int32_t i = tsbars_index_at(c, pt.x);
-    if (i < 0) return;
-    const tsbars_bucket_t &b = d->buckets[i];
-    if (!(b.flags & TSBARS_SELECTABLE)) return;
-    d->selected = b.key;
-    lv_obj_invalidate(c);
-    tsbars_select_t ev = {b.key, i, &b};
-    lv_obj_send_event(c, TSBARS_EVENT_SELECT, &ev);
+    select_at(c, pt.x, true);
 }
 
 // ---- Class ----------------------------------------------------------------------
@@ -512,7 +564,7 @@ void constructor_cb(const lv_obj_class_t *, lv_obj_t *obj) {
     d->self = obj;
     d->small_font = lv_obj_get_style_text_font(obj, LV_PART_MAIN);
     d->accent = lv_color_hex(0x22d3ee);
-    d->m = {64, 14, 36, 36, 14, 36};
+    d->m = {0, 14, 36, 36, 14, 36};
     d->count = 14;
     d->bar_permille = 600;
     d->lim_back = d->lim_fwd = -1;

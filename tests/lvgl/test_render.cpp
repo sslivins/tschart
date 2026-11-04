@@ -131,6 +131,14 @@ static void drag(int32_t x0, int32_t y, int32_t x1) {
     release();
     run(600);  // let springs settle
 }
+// Held still past the pan delay, then dragged.
+static void hold_drag(int32_t x0, int32_t y, int32_t x1) {
+    press(x0, y);
+    run(400);
+    move_to(x1, y);
+    release();
+    run(600);
+}
 static void tap(int32_t x, int32_t y) {
     press(x, y);
     release();
@@ -399,13 +407,22 @@ static void test_home_chart() {
     tschart_set_input(c, TSCHART_INPUT_PAN | TSCHART_INPUT_CURSOR);
     tschart_set_bounds(c, START - 86400, END);
     g_ev = {};
-    drag(p.x1 + 50, yp, p.x1 + 50 + quarter);
+    drag(p.x1 + 50, yp, p.x1 + 50 + quarter / 2);  // ends over data, short of the gap
+    CHECK_EQ(g_ev.window_requests, 0);  // a plain drag scrubs
+    CHECK(g_ev.last_cursor.active);
+    tschart_clear_cursor(c);
+
+    // Held still first, the drag pans from where the finger was held.
+    press(p.x1 + 50, yp);
+    run(400);
+    CHECK(!g_ev.last_cursor.active);  // the cursor makes way
+    move_to(p.x1 + 50 + quarter, yp);
+    release();
+    run(600);
     CHECK_EQ(g_ev.window_requests, 1);
     const tschart_window_request_t r = g_ev.last_request;
     CHECK_EQ(r.end - r.start, END - START);
-    // The pan starts where the first move crossed the threshold, not at the press.
-    const int32_t moved = quarter - quarter / 8;
-    CHECK_NEAR(r.end, END - (int64_t)moved * (END - START) / (p.x2 - p.x1), 60);
+    CHECK_NEAR(r.end, END - (int64_t)quarter * (END - START) / (p.x2 - p.x1), 60);
 
     const tschart_dataset_t stale = home_dataset(src, r.request_id + 1, r.start, r.end);
     CHECK(!tschart_set_dataset(c, &stale));
@@ -573,6 +590,9 @@ static void test_energy_bars() {
     CHECK_EQ(g_ev.selects, 1);  // no data, not selectable
 
     drag(p.x1 + 20, yp, p.x1 + 20 + slot * 22 / 10);
+    CHECK_EQ(g_ev.view_changes, 0);  // a plain drag scrubs the selection
+
+    hold_drag(p.x1 + 20, yp, p.x1 + 20 + slot * 22 / 10);
     CHECK_EQ(g_ev.view_changes, 1);
     CHECK_EQ(g_ev.last_view.steps, -2);
     tsbars_get_view(c, &view);
@@ -580,11 +600,11 @@ static void test_energy_bars() {
     CHECK_EQ(view.last_key, BAR_KEY0 + 3);
     render("energy_panned");
 
-    drag(p.x2 - 20, yp, p.x2 - 20 - slot * 3);
+    hold_drag(p.x2 - 20, yp, p.x2 - 20 - slot * 3);
     tsbars_get_view(c, &view);
     CHECK_EQ(view.last_key, BAR_KEY0 + 5);
     const int n = g_ev.view_changes;
-    drag(p.x2 - 20, yp, p.x2 - 20 - slot * 2);  // already at the newest
+    hold_drag(p.x2 - 20, yp, p.x2 - 20 - slot * 2);  // already at the newest
     CHECK_EQ(g_ev.view_changes, n);
     tsbars_get_view(c, &view);
     CHECK_EQ(view.last_key, BAR_KEY0 + 5);
