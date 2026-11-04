@@ -444,15 +444,17 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 // with options.metrics.
 const METRICS = {
     sidePad: 8, topPad: 6, timeAxisH: 22, noteStripH: 22, paneGap: 8,
-    gutterW: 52, outsideAxisW: 44, panStartPx: 10, cursorSnapPx: 30, springMs: 180,
-    doubleTapMs: 350, doubleTapAfterPanMs: 600, longPressMs: 450,
+    // gutterW/outsideAxisW: null sizes the y axis to its widest label.
+    gutterW: null, outsideAxisW: null, axisMinW: 24,
+    panStartPx: 10, cursorSnapPx: 30, springMs: 180,
+    doubleTapMs: 350, doubleTapAfterPanMs: 600, holdPanMs: 350,
     noteLabelW: 70, cardMaxRows: 10, tickMinPx: 30, tagH: 18,
 };
 
 const CSS = `
 .tschart{position:relative;display:flex;flex-direction:column;min-height:160px;
  font:12px/1.3 system-ui,sans-serif;color:var(--ts-text,#e6e6ef);user-select:none;
- -webkit-user-select:none}
+ -webkit-user-select:none;-webkit-touch-callout:none}
 .tschart-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}
 .tschart-head:empty{display:none}
 .tschart-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;
@@ -495,6 +497,7 @@ const CSS = `
  border-radius:50%;animation:tschart-spin .8s linear infinite;pointer-events:none}
 @keyframes tschart-spin{to{transform:rotate(360deg)}}
 .tschart.panning .tschart-body{cursor:grabbing}
+.tschart.holding .tschart-plotbg{fill:var(--ts-hold-bg,color-mix(in srgb,#fff 7%,var(--ts-plot-bg,var(--ts-panel,#1a1a2e))))}
 .tschart-grid{stroke:var(--ts-grid,#2e2e3e);stroke-width:1}
 .tschart-plotbg{fill:var(--ts-plot-bg,var(--ts-panel,#1a1a2e))}
 .tschart-gutter{fill:var(--ts-panel,#1a1a2e);fill-opacity:.9}
@@ -1093,19 +1096,11 @@ class TsChart {
         if (!W || !H) { this.geom = null; return; }
         const m = this.m;
         const noteH = this._notesInWindow().length ? m.noteStripH : 0;
-        const plot = { x1: this.o.axis === 'outside' ? m.outsideAxisW : m.sidePad, x2: W - m.sidePad,
-                       y1: m.topPad + noteH, y2: H - m.timeAxisH };
+        const y1 = m.topPad + noteH, y2 = H - m.timeAxisH;
         const vis = this.panes.map(p => this._paneVisible(p));
-        const slots = splitPanes(plot.y1, plot.y2, m.paneGap, this.panes.map(p => p.weight),
+        const slots = splitPanes(y1, y2, m.paneGap, this.panes.map(p => p.weight),
                                  this.panes.map(p => p.minHeight), vis);
         const win = this.win;
-        const xsBySrc = new Map();
-        if (win && this.data) {
-            const pw = plot.x2 - plot.x1, span = Math.max(1, win.end - win.start);
-            for (const [id, d] of this.data.sources) {
-                xsBySrc.set(id, d.t.map(t => plot.x1 + Math.floor((t - win.start) * pw / span)));
-            }
-        }
         const axes = this.panes.map((p, i) => {
             let lo = Infinity, hi = -Infinity;
             if (win && this.data) {
@@ -1124,6 +1119,19 @@ class TsChart {
             const ticks = ticksForHeight(sh, p.maxTicks, m.tickMinPx);
             return lo <= hi ? autoRange(p.range, lo, hi, ticks) : autoRange(p.range, 1, 0, ticks);
         });
+        // Label, its 6 px gap to the axis and a 4 px margin.
+        const fitW = Math.max(m.axisMinW,
+            axisLabelW(this.panes.map((p, i) => vis[i] && { axis: axes[i], fmt: p.fmt })) + 10);
+        const gutterW = m.gutterW ?? fitW;
+        const x1 = this.o.axis === 'outside' ? (m.outsideAxisW ?? fitW) : m.sidePad;
+        const plot = { x1, x2: W - m.sidePad, y1, y2 };
+        const xsBySrc = new Map();
+        if (win && this.data) {
+            const pw = plot.x2 - plot.x1, span = Math.max(1, win.end - win.start);
+            for (const [id, d] of this.data.sources) {
+                xsBySrc.set(id, d.t.map(t => plot.x1 + Math.floor((t - win.start) * pw / span)));
+            }
+        }
         this.svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         this.clip.setAttribute('x', plot.x1);
         this.clip.setAttribute('y', 0);
@@ -1133,7 +1141,7 @@ class TsChart {
         this.plotBg.setAttribute('y', plot.y1);
         this.plotBg.setAttribute('width', Math.max(0, plot.x2 - plot.x1));
         this.plotBg.setAttribute('height', Math.max(0, plot.y2 - plot.y1));
-        this.geom = { W, H, plot, vis, slots, axes, xsBySrc };
+        this.geom = { W, H, plot, vis, slots, axes, xsBySrc, gutterW };
     }
 
     _drawStatic() {
@@ -1321,6 +1329,7 @@ class TsChart {
         ov.textContent = '';
         const g = this.geom;
         this.root.classList.toggle('panning', !!(this.gesture && this.gesture.pan));
+        this.root.classList.toggle('holding', !!(this.gesture && this.gesture.hold));
         if (!g) return;
         const { plot, slots, axes, W } = g;
         const m = this.m;
@@ -1330,8 +1339,8 @@ class TsChart {
 
         // gutter
         if (this.axisOpen && this.o.axis !== 'outside') {
-            const gx = plot.x1 + m.gutterW;
-            s('rect', { x: plot.x1, y: plot.y1, width: m.gutterW, height: plot.y2 - plot.y1,
+            const gx = plot.x1 + g.gutterW;
+            s('rect', { x: plot.x1, y: plot.y1, width: g.gutterW, height: plot.y2 - plot.y1,
                         class: 'tschart-gutter' }, dyn);
             this.panes.forEach((p, i) => {
                 if (!g.vis[i]) return;
@@ -1368,7 +1377,7 @@ class TsChart {
             }
             b.textContent = `${p.unit} ${this.axisOpen ? '◂' : '▸'}`;
             b.style.color = p.color;
-            b.style.left = (plot.x1 + 4 + (this.axisOpen ? m.gutterW : 0)) + 'px';
+            b.style.left = (plot.x1 + 4 + (this.axisOpen ? g.gutterW : 0)) + 'px';
             b.style.top = (slots[i].y1 + 4) + 'px';
             ov.appendChild(b);
         });
@@ -1559,15 +1568,24 @@ class TsChart {
             if (e.button > 0 || !this.win || (!this.canPan && !this.canCursor)) return;
             const p = local(e);
             if (!inPlot(p)) return;
-            this.gesture = { id: e.pointerId, type: e.pointerType, x0: p.x, y0: p.y,
-                             base: this.dx, pan: false, long: false };
-            if (e.pointerType !== 'mouse' && this.canCursor) {
-                this.gesture.timer = setTimeout(() => {
-                    const gs = this.gesture;
-                    if (!gs || gs.pan) return;
-                    gs.long = true;
-                    this._setCursor(this._cursorAt(gs.x0));
-                }, this.m.longPressMs);
+            const gs = this.gesture = { id: e.pointerId, type: e.pointerType, x0: p.x, y0: p.y,
+                                        x: p.x, base: this.dx, pan: false, long: false, hold: false };
+            if (e.pointerType === 'mouse') return;
+            // Touch: the cursor goes where the finger lands and a drag scrubs
+            // it; holding still first picks the chart up to pan instead.
+            if (this.canCursor) this._setCursor(this._cursorAt(p.x));
+            if (this.canPan && this.canCursor) {
+                gs.timer = setTimeout(() => {
+                    if (this.gesture !== gs || gs.pan || gs.long) return;
+                    gs.hold = gs.pan = true;
+                    try { b.setPointerCapture(gs.id); } catch (err) { /* ignore */ }
+                    cancelAnimationFrame(this.springRaf);
+                    this.spring = false;
+                    gs.base = this.dx;
+                    gs.x0 = gs.x;
+                    this._clearCursor();
+                    this._overlay();
+                }, this.m.holdPanMs);
             }
         });
 
@@ -1583,14 +1601,15 @@ class TsChart {
                 return;
             }
             if (e.pointerId !== gs.id) return;
+            gs.x = p.x;
             const dx = p.x - gs.x0, dy = p.y - gs.y0;
             if (gs.long) {
                 this._setCursor(this._cursorAt(p.x));
                 return;
             }
             if (!gs.pan) {
-                // Touch drags scrub (the page's buttons move the window), as
-                // do drags on charts that can't pan; only a mouse drag pans.
+                // Touch drags scrub (a hold first pans, see pointerdown), as
+                // do drags on charts that can't pan; a mouse drag pans.
                 const scrubs = !this.canPan || (gs.type !== 'mouse' && this.canCursor);
                 if (scrubs && Math.abs(dx) > this.m.panStartPx && Math.abs(dx) > Math.abs(dy)) {
                     clearTimeout(gs.timer);
@@ -1609,10 +1628,13 @@ class TsChart {
                     gs.base = this.dx;
                     this._clearCursor();
                 } else if (Math.abs(dy) > this.m.panStartPx) {
+                    // The page is scrolling: drop the cursor this touch put up.
                     clearTimeout(gs.timer);
                     this.gesture = null;
+                    if (gs.type !== 'mouse') this._setCursor(null);
                     return;
                 } else {
+                    if (gs.type !== 'mouse' && this.canCursor) this._setCursor(this._cursorAt(p.x));
                     return;
                 }
             }
@@ -1631,7 +1653,10 @@ class TsChart {
             this.gesture = null;
             const p = local(e);
             const now = Date.now();
-            if (gs.pan) {
+            if (gs.hold && this.dx === gs.base) {
+                // Held but never moved: leave the cursor where the finger was.
+                if (!cancelled && this.canCursor) this._setCursor(this._cursorAt(gs.x));
+            } else if (gs.pan) {
                 this.lastPanEnd = now;
                 const { plot } = this.geom;
                 const pw = plot.x2 - plot.x1, w = this.win.end - this.win.start;
@@ -1647,6 +1672,8 @@ class TsChart {
                 } else {
                     this._springTo(this.pending ? this._shiftFor(this.pending) : 0);
                 }
+            } else if (cancelled && !gs.long && gs.type !== 'mouse') {
+                this._setCursor(null);
             } else if (!gs.long && !cancelled) {
                 if (now - this.lastTap < this.m.doubleTapMs && Math.abs(p.x - this.lastTapX) < 30 &&
                     now - this.lastPanEnd > this.m.doubleTapAfterPanMs) {
@@ -1721,17 +1748,33 @@ function measure(text) {
     return measureCtx.measureText(text).width;
 }
 
+/** Widest y tick label (plus `extra` strings) over `items` of
+ *  { axis, fmt }; falsy items are hidden panes. */
+function axisLabelW(items, extra = []) {
+    let w = 0;
+    for (const it of items) {
+        if (!it || !(it.axis.step > 0)) continue;
+        for (let v = it.axis.lo; v <= it.axis.hi; v += it.axis.step) {
+            w = Math.max(w, measure(it.fmt(v, 'axis')));
+        }
+    }
+    for (const t of extra) w = Math.max(w, measure(t));
+    return Math.ceil(w);
+}
+
 // ----------------------------------------------------------------- bars ----
 
 const BARS_METRICS = {
-    gutterW: 52, gutterNarrowW: 40, rightPad: 16, rightNarrowPad: 8, narrowW: 600,
+    // gutterW: null sizes the y axis to its widest label or unit.
+    gutterW: null, axisMinW: 24, rightPad: 16, rightNarrowPad: 8, narrowW: 600,
     topPad: 24, paneGap: 26, labelH: 26, labelMinGap: 64, labelNarrowMinGap: 52,
-    panStartMousePx: 5, panStartTouchPx: 10, springMs: 180, tickMinPx: 24,
+    panStartMousePx: 5, panStartTouchPx: 10, holdPanMs: 350, springMs: 180, tickMinPx: 24,
     cardMaxRows: 10, hitTopPx: 0,
 };
 
 const BARS_CSS = `
 .tsbars .tschart-body{touch-action:pan-y}
+.tsbars.holding .tsbars-svg{background:var(--ts-hold-bg,color-mix(in srgb,#fff 7%,transparent))}
 .tsbars-axis text,.tsbars-label{fill:var(--ts-dim,#8a8a9a);font:11px system-ui,sans-serif}
 .tsbars-label.accent{fill:var(--ts-accent,#22d3ee);font-weight:700}
 .tsbars:not(.panning) .tsbars-label-out{display:none}
@@ -1950,10 +1993,8 @@ class TsBars {
         const W = this.body.clientWidth, H = this.body.clientHeight;
         if (!W || !H) return null;
         const m = this.m, narrow = W < m.narrowW;
-        const plot = { x1: narrow ? m.gutterNarrowW : m.gutterW, x2: W - (narrow ? m.rightNarrowPad : m.rightPad),
-                       y1: m.topPad, y2: H - m.labelH };
-        const pw = Math.max(1, plot.x2 - plot.x1), n = this.o.count;
-        const slots = splitPanes(plot.y1, plot.y2, m.paneGap, this.panes.map(p => p.weight),
+        const y1 = m.topPad, y2 = H - m.labelH, n = this.o.count;
+        const slots = splitPanes(y1, y2, m.paneGap, this.panes.map(p => p.weight),
                                  this.panes.map(p => p.minHeight), this.panes.map(() => true));
         const vis = [];
         for (let i = this.first; i < Math.min(this.buckets.length, this.first + n); i++) vis.push(i);
@@ -1983,6 +2024,12 @@ class TsBars {
             a.empty = !have;
             return a;
         });
+        // Labels and units end 8 px left of the plot; 4 px margin.
+        const fitW = axisLabelW(this.panes.map((p, k) => !axes[k].empty && { axis: axes[k], fmt: p.fmt }),
+                                this.panes.map(p => p.unit).filter(Boolean)) + 12;
+        const plot = { x1: m.gutterW ?? Math.max(m.axisMinW, fitW),
+                       x2: W - (narrow ? m.rightNarrowPad : m.rightPad), y1, y2 };
+        const pw = Math.max(1, plot.x2 - plot.x1);
         return { W, H, narrow, plot, pw, n, slots, axes };
     }
 
@@ -2243,8 +2290,19 @@ class TsBars {
             if (!inPlot(p)) return;
             cancelAnimationFrame(this.springRaf);
             this.springRaf = 0;
-            this.gesture = { id: e.pointerId, touch: e.pointerType !== 'mouse', x0: p.x, y0: p.y,
-                             base: this.dx, pan: false };
+            const gs = this.gesture = { id: e.pointerId, touch: e.pointerType !== 'mouse', x0: p.x,
+                                        y0: p.y, x: p.x, base: this.dx, pan: false };
+            if (!gs.touch) return;
+            // Touch drags scrub the day card; holding still first pans.
+            gs.timer = setTimeout(() => {
+                if (this.gesture !== gs || gs.pan || gs.scrub) return;
+                gs.pan = gs.hold = true;
+                gs.lim = this._limits();
+                gs.x0 = gs.x;
+                try { b.setPointerCapture(gs.id); } catch (err) { /* ignore */ }
+                this.root.classList.add('panning', 'holding');
+                this._hover(null);
+            }, this.m.holdPanMs);
         });
         b.addEventListener('pointermove', e => {
             const p = local(e), gs = this.gesture;
@@ -2253,6 +2311,7 @@ class TsBars {
                 return;
             }
             if (e.pointerId !== gs.id) return;
+            gs.x = p.x;
             const dx = p.x - gs.x0, dy = p.y - gs.y0;
             if (gs.scrub) {
                 this._hover(inPlot(p) ? p.x : null);
@@ -2261,7 +2320,7 @@ class TsBars {
             if (!gs.pan) {
                 const start = gs.touch ? this.m.panStartTouchPx : this.m.panStartMousePx;
                 if (gs.touch && Math.abs(dx) > start && Math.abs(dx) > Math.abs(dy)) {
-                    // Touch drags scrub the day card; the page's buttons pan.
+                    clearTimeout(gs.timer);
                     gs.scrub = true;
                     try { b.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
                     this._hover(p.x);
@@ -2274,6 +2333,7 @@ class TsBars {
                     this.root.classList.add('panning');
                     this._hover(null);
                 } else if (gs.touch && Math.abs(dy) > start) {
+                    clearTimeout(gs.timer);
                     this.gesture = null;
                     return;
                 } else {
@@ -2286,9 +2346,14 @@ class TsBars {
         const end = (e, cancelled) => {
             const gs = this.gesture;
             if (!gs || e.pointerId !== gs.id) return;
+            clearTimeout(gs.timer);
             this.gesture = null;
+            this.root.classList.remove('holding');
             if (gs.scrub) this._hover(null);
-            if (!gs.pan) {
+            // Held but never moved: a long tap, so it still selects.
+            const still = gs.hold && this.dx === gs.base;
+            if (still) this.root.classList.remove('panning');
+            if (!gs.pan || still) {
                 if (cancelled || !this.geom) return;
                 const p = local(e), g = this.geom;
                 const j = slotAt(p.x, g.plot.x1, g.pw, g.n);

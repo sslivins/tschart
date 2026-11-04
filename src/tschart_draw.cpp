@@ -249,7 +249,7 @@ void draw_grid(lv_obj_t *c, lv_layer_t *layer, const Geo &g) {
             char label[24];
             fmt_value(p, v, TSCHART_FMT_AXIS, label, sizeof(label));
             const int32_t ty = LV_CLAMP(g.slot[i].y1 - lh / 2, y - lh / 2, g.slot[i].y2 - lh / 2);
-            text(layer, {g.coords.x1, ty, g.plot.x1 - 8, ty + lh}, label, p.cfg.color,
+            text(layer, {g.coords.x1, ty, g.plot.x1 - AXIS_LABEL_GAP, ty + lh}, label, p.cfg.color,
                  LV_TEXT_ALIGN_RIGHT, d->small_font);
         }
     }
@@ -490,7 +490,7 @@ void edge_zones(lv_obj_t *c, lv_layer_t *layer, int32_t dx) {
 void draw_gutter(lv_obj_t *c, lv_layer_t *layer) {
     Impl *d = impl(c);
     const lv_area_t &P = d->plot;
-    const int32_t gx = P.x1 + GUTTER_W;
+    const int32_t gx = P.x1 + d->axis_w;
     const int32_t lh = lv_font_get_line_height(d->small_font);
     // One backdrop for the whole height so gaps between panes don't show through.
     rect(layer, {P.x1, P.y1, gx, P.y2}, col_panel(c), LV_OPA_90);
@@ -505,7 +505,7 @@ void draw_gutter(lv_obj_t *c, lv_layer_t *layer) {
             fmt_value(p, v, TSCHART_FMT_AXIS, label, sizeof(label));
             // Keep edge labels inside their own pane so stacked panes don't collide.
             const int32_t ty = LV_CLAMP(p.slot.y1, y - lh / 2, p.slot.y2 - lh);
-            text(layer, {P.x1, ty, gx - 8, ty + lh}, label, p.cfg.color,
+            text(layer, {P.x1, ty, gx - AXIS_LABEL_GAP, ty + lh}, label, p.cfg.color,
                  LV_TEXT_ALIGN_RIGHT, d->small_font);
         }
     }
@@ -849,6 +849,8 @@ void draw_main(lv_obj_t *c, lv_layer_t *layer) {
     } else if (!d->pending) {
         draw_static(c, layer, make_geo(c, 0, 0));
     }
+    // A held touch has picked the chart up to pan: tint the plot to say so.
+    if (d->holding) rect(layer, P, lv_color_white(), LV_OPA_10);
     if (d->axis_open && !d->axis_outside) draw_gutter(c, layer);
     if (d->end_tags && d->cursor < 0 && dx == 0 && !d->pending) draw_end_tags(c, layer);
     {

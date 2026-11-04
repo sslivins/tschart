@@ -12,7 +12,7 @@ v1 = v0 + fixes from two reviews (LVGL/perf and API/reuse). v0 kept as
 
 Agreed UX (mockups at the end): stacked panes sharing one time axis; chip header
 (legend + visibility toggles) inside the card; compact band key; collapsible y-axis
-(closed = unit pill per pane, open = 66 px gutter OVER the plot); line-end value tags
+(closed = unit pill per pane, open = gutter OVER the plot, as wide as its labels); line-end value tags
 with a toggle; tap/scrub cursor with readout card (existing behaviour, kept).
 
 ## 1. Packaging
@@ -65,7 +65,8 @@ Windows are committed only as part of a dataset (§4), so window and data can ne
 disagree.
 
 Pan flow:
-1. Widget owns the gesture (drag > 14 px pans, rubber-band past bounds at 1/3 speed,
+1. Widget owns the gesture (with a cursor: hold still 350 ms, then drag; without:
+   drag > 14 px pans; rubber-band past bounds at 1/3 speed,
    180 ms spring back).
 2. On release it computes the target window (snapped, clamped), stores it as
    **`pending_window`**, increments `request_id` and emits
@@ -256,7 +257,8 @@ void tschart_set_axis_open(lv_obj_t *c, bool open);   // no event
 bool tschart_get_axis_open(const lv_obj_t *c);
 ```
 
-Closed: one pill per visible pane. Open: 66 px gutter over the plot's left edge, all
+Closed: one pill per visible pane. Open: a gutter over the plot's left edge, sized to the
+widest tick label (min 30 px) and shared by outside axes and the bars, all
 ticks in pane colour. X mapping unchanged, so the cache stays valid. User toggles emit
 `TSCHART_EVENT_AXIS_TOGGLED`.
 
@@ -272,7 +274,9 @@ User toggles emit `TSCHART_EVENT_TAGS_TOGGLED`.
 
 ## 11. Cursor
 
-Current behaviour: tap snaps within 30 px; long-press then drag scrubs; tapping empty
+Current behaviour: a touch puts the cursor where it lands and a drag scrubs it; holding
+still 350 ms hides it, tints the plot and turns the drag into a pan (released without
+moving, the cursor comes back); tapping empty
 space clears. Line across all panes, a dot per `in_cursor` layer, card flips near the
 right edge. The card is built from rows; the widget adds a row per `in_cursor` layer
 and the host adds the rest via a callback:

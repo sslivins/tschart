@@ -103,6 +103,21 @@ void compute_axes(Impl *d) {
     }
 }
 
+// Widest y tick label over the visible panes, plus its gap and margin.
+int32_t axis_width(const Impl *d) {
+    int32_t w = 0;
+    for (uint8_t i = 0; i < d->npanes; i++) {
+        const tschart_pane &p = d->panes[i];
+        if (!p.visible || p.axis.step <= 0) continue;
+        for (int32_t v = p.axis.lo; v <= p.axis.hi; v += p.axis.step) {
+            char label[24];
+            fmt_value(p, v, TSCHART_FMT_AXIS, label, sizeof(label));
+            w = LV_MAX(w, text_w(label, d->small_font));
+        }
+    }
+    return LV_MAX(AXIS_MIN_W, w + AXIS_LABEL_GAP + AXIS_MARGIN);
+}
+
 // ---- Child controls ----------------------------------------------------
 
 void style_pill(lv_obj_t *o, lv_color_t border, lv_color_t bg) {
@@ -203,7 +218,7 @@ void update_pills(lv_obj_t *c) {
         lv_obj_set_style_border_color(p.pill, p.cfg.color, 0);
         lv_obj_set_style_bg_color(p.pill, col_panel(c), 0);
         lv_obj_set_pos(p.pill,
-                       d->plot.x1 - coords.x1 + 4 + (d->axis_open ? GUTTER_W : 0),
+                       d->plot.x1 - coords.x1 + 4 + (d->axis_open ? d->axis_w : 0),
                        p.slot.y1 - coords.y1 + 4);
     }
 }
@@ -435,24 +450,31 @@ void on_press(lv_obj_t *c, lv_event_code_t code) {
             d->dx = 0;
             d->panning = false;
             d->scrubbing = false;
+            d->holding = false;
+            d->press_ms = lv_tick_get();
             d->press_in_plot = in_plot_band(d, point);
             break;
-        case LV_EVENT_LONG_PRESSED:
-            if (!d->panning) d->scrubbing = true;
-            return;
         case LV_EVENT_RELEASED:
-        case LV_EVENT_PRESS_LOST:
+        case LV_EVENT_PRESS_LOST: {
+            // Held but never moved: the cursor comes back where it was.
+            const bool still = d->holding && d->dx == 0 && code == LV_EVENT_RELEASED;
+            if (d->holding) lv_obj_invalidate(c);
+            d->holding = false;
             pan_end(c, code == LV_EVENT_RELEASED);
             d->scrubbing = false;
             d->down = false;
+            if (still && d->has_ds && !loading(d)) set_cursor(c, cursor_at(c, point.x));
             apply_deferred(c);
             if (d->timer == nullptr && !d->cache_valid) schedule(c);
             return;
+        }
         default:
             break;
     }
     if (!d->press_in_plot) return;
-    if (!(d->input & TSCHART_INPUT_CURSOR) && !(d->input & TSCHART_INPUT_PAN)) return;
+    const bool can_pan = d->input & TSCHART_INPUT_PAN;
+    const bool can_cursor = d->input & TSCHART_INPUT_CURSOR;
+    if (!can_cursor && !can_pan) return;
     if (d->panning) {
         uint32_t ts, te;
         target_window(d, &ts, &te);
@@ -465,20 +487,28 @@ void on_press(lv_obj_t *c, lv_event_code_t code) {
         }
         return;
     }
-    if ((d->input & TSCHART_INPUT_PAN) && !d->scrubbing && abs(point.x - d->x0) > PAN_START_PX) {
-        set_cursor(c, -1);
+    // A drag scrubs the cursor; holding still first picks the chart up to
+    // pan. Without a cursor a drag pans straight away.
+    const bool moved = abs(point.x - d->x0) > PAN_START_PX;
+    if (can_cursor && moved) d->scrubbing = true;
+    const bool start_pan = can_pan && !d->scrubbing &&
+                           (can_cursor ? lv_tick_elaps(d->press_ms) >= HOLD_PAN_MS : moved);
+    if (start_pan) {
         // Mid-load the old window's image, drawn moved into place, is what
         // slides; building now would draw stale data into the new window.
         int32_t shift;
         const bool ready = loading(d) ? cache_shift(c, &shift)
                                       : (cache_build(c), cache_ready(c));
         if (ready) {
+            set_cursor(c, -1);
             d->panning = true;
+            d->holding = can_cursor;
             d->x0 = point.x;  // start sliding from here, no jump
+            lv_obj_invalidate(c);
             return;
         }
     }
-    if (!d->has_ds || loading(d) || !(d->input & TSCHART_INPUT_CURSOR)) return;
+    if (!d->has_ds || loading(d) || !can_cursor) return;
     set_cursor(c, cursor_at(c, point.x));
 }
 
@@ -694,8 +724,7 @@ void layout(lv_obj_t *c) {
         top = h.y2 + 10;
     }
     if (d->nnotes) top += NOTE_STRIP_H;
-    d->plot = {coords.x1 + (d->axis_outside ? OUTSIDE_AXIS_W : SIDE_PAD), top,
-               coords.x2 - SIDE_PAD, coords.y2 - TIME_AXIS_H};
+    d->plot = {coords.x1 + SIDE_PAD, top, coords.x2 - SIDE_PAD, coords.y2 - TIME_AXIS_H};
     d->have_plot = d->plot.y2 > d->plot.y1 + 20;
 
     update_visibility(d);
@@ -710,6 +739,9 @@ void layout(lv_obj_t *c) {
     split_panes(d->plot.y1, d->plot.y2, PANE_GAP, weights, mins, vis, d->npanes, slots);
     for (uint8_t i = 0; i < d->npanes; i++) d->panes[i].slot = slots[i];
     compute_axes(d);
+    // Axes only depend on pane heights, so the width can follow from them.
+    d->axis_w = axis_width(d);
+    if (d->axis_outside) d->plot.x1 = coords.x1 + d->axis_w;
     update_pills(c);
     update_status(c);
 }

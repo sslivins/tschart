@@ -57,7 +57,7 @@ void tsbars_set_small_font(lv_obj_t *c, const lv_font_t *font);
 void tsbars_set_accent(lv_obj_t *c, lv_color_t color);
 
 typedef struct {
-    int16_t gutter;     /* y-axis labels, left of the plot (64) */
+    int16_t gutter;     /* y-axis labels, left of the plot; 0 (default) fits the labels */
     int16_t right;      /* right inset (14) */
     int16_t top;        /* above the first pane: its unit sits here (36) */
     int16_t label_h;    /* bucket labels under the last pane (36) */

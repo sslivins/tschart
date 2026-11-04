@@ -13,9 +13,11 @@ static constexpr int32_t HEADER_PAD = 10;    // header inset
 static constexpr int32_t TIME_AXIS_H = 40;   // time labels under the plot
 static constexpr int32_t NOTE_STRIP_H = 38;  // fault codes above the plot
 static constexpr int32_t PANE_GAP = 10;
-static constexpr int32_t GUTTER_W = 66;      // open y axis
-static constexpr int32_t OUTSIDE_AXIS_W = 58; // y labels left of the plot
+static constexpr int32_t AXIS_MIN_W = 30;    // y axis (open gutter or outside) floor
+static constexpr int32_t AXIS_LABEL_GAP = 8; // y label end to the axis line
+static constexpr int32_t AXIS_MARGIN = 4;    // left of the widest y label
 static constexpr int32_t PAN_START_PX = 14;
+static constexpr uint32_t HOLD_PAN_MS = 350;  // touch held still this long pans
 static constexpr int32_t CURSOR_SNAP_PX = 30;
 static constexpr uint32_t SPRING_MS = 180;
 static constexpr uint32_t DOUBLE_TAP_AFTER_PAN_MS = 600;
@@ -192,6 +194,7 @@ struct Impl {
 
     // Geometry (screen coords), recomputed by layout().
     lv_area_t plot;
+    int32_t axis_w;            // open gutter / outside axis, fitted to its labels
     bool have_plot;
 
     // Cursor.
@@ -215,8 +218,8 @@ struct Impl {
 
     // Gesture.
     int32_t x0, dx;
-    bool panning, scrubbing, down, springing, press_in_plot;
-    uint32_t pan_ended_ms;
+    bool panning, scrubbing, holding, down, springing, press_in_plot;
+    uint32_t press_ms, pan_ended_ms;
 
     tschart_profile_t prof;
 };
