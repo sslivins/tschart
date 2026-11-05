@@ -1119,11 +1119,13 @@ class TsChart {
             const ticks = ticksForHeight(sh, p.maxTicks, m.tickMinPx);
             return lo <= hi ? autoRange(p.range, lo, hi, ticks) : autoRange(p.range, 1, 0, ticks);
         });
-        // Label, its 6 px gap to the axis and a 4 px margin.
-        const fitW = Math.max(m.axisMinW,
-            axisLabelW(this.panes.map((p, i) => vis[i] && { axis: axes[i], fmt: p.fmt })) + 10);
-        const gutterW = m.gutterW ?? fitW;
-        const x1 = this.o.axis === 'outside' ? (m.outsideAxisW ?? fitW) : m.sidePad;
+        // The host's own padding gives the labels room on the left, so only a
+        // 1 px margin: outside labels end 3 px before the plot; in the gutter
+        // they end 2 px before the 3 px ticks.
+        const labelW = axisLabelW(this.panes.map((p, i) => vis[i] && { axis: axes[i], fmt: p.fmt }));
+        const gutterW = m.gutterW ?? Math.max(m.axisMinW, labelW + 6);
+        const x1 = this.o.axis === 'outside'
+            ? (m.outsideAxisW ?? Math.max(m.axisMinW, labelW + 4)) : m.sidePad;
         const plot = { x1, x2: W - m.sidePad, y1, y2 };
         const xsBySrc = new Map();
         if (win && this.data) {
@@ -1205,7 +1207,7 @@ class TsChart {
                 const y = mapY(v, a.lo, a.hi, sl.y1, sl.y2) + 0.5;
                 s('line', { x1: plot.x1, x2: plot.x2, y1: y, y2: y, class: 'tschart-grid' }, st);
                 if (!outside) continue;
-                const te = s('text', { x: plot.x1 - 6, y: y + 4, 'text-anchor': 'end',
+                const te = s('text', { x: plot.x1 - 3, y: y + 4, 'text-anchor': 'end',
                                        class: 'tschart-axis' }, this.axisG);
                 te.style.fill = p.color;
                 te.textContent = p.fmt(v, 'axis');
@@ -1349,8 +1351,8 @@ class TsChart {
                             'stroke-width': 2 }, dyn);
                 for (let v = a.lo; v <= a.hi; v += a.step) {
                     const y = mapY(v, a.lo, a.hi, sl.y1, sl.y2);
-                    s('line', { x1: gx - 4, x2: gx, y1: y + 0.5, y2: y + 0.5, stroke: p.color }, dyn);
-                    const te = s('text', { x: gx - 6, y: clamp(y + 4, sl.y1 + 10, sl.y2 - 1),
+                    s('line', { x1: gx - 3, x2: gx, y1: y + 0.5, y2: y + 0.5, stroke: p.color }, dyn);
+                    const te = s('text', { x: gx - 5, y: clamp(y + 4, sl.y1 + 10, sl.y2 - 1),
                                            'text-anchor': 'end', class: 'tschart-axis' }, dyn);
                     te.style.fill = p.color;
                     te.textContent = p.fmt(v, 'axis');
@@ -2024,9 +2026,9 @@ class TsBars {
             a.empty = !have;
             return a;
         });
-        // Labels and units end 8 px left of the plot; 4 px margin.
+        // Labels and units end 4 px left of the plot; 1 px margin.
         const fitW = axisLabelW(this.panes.map((p, k) => !axes[k].empty && { axis: axes[k], fmt: p.fmt }),
-                                this.panes.map(p => p.unit).filter(Boolean)) + 12;
+                                this.panes.map(p => p.unit).filter(Boolean)) + 5;
         const plot = { x1: m.gutterW ?? Math.max(m.axisMinW, fitW),
                        x2: W - (narrow ? m.rightNarrowPad : m.rightPad), y1, y2 };
         const pw = Math.max(1, plot.x2 - plot.x1);
@@ -2062,7 +2064,7 @@ class TsBars {
             const yOf = v => mapY(v, a.lo, a.hi, sl.y1, sl.y2) + 0.5;
             if (p.unit) {
                 const mid = p.unitAt === 'middle';
-                const t = s('text', { x: plot.x1 - 8, y: mid ? (sl.y1 + sl.y2) / 2 + 4 : sl.y1 - 10,
+                const t = s('text', { x: plot.x1 - 4, y: mid ? (sl.y1 + sl.y2) / 2 + 4 : sl.y1 - 10,
                                       'text-anchor': 'end', class: 'tsbars-unit' }, axisG);
                 t.textContent = p.unit;
                 if (p.unitColor) t.style.fill = p.unitColor;
@@ -2081,7 +2083,7 @@ class TsBars {
                 if (ends && v !== a.lo && v + a.step <= a.hi) continue;
                 // With end labels only, they sit inside the pane so the middle stays free for the unit.
                 const dy = ends ? (v === a.lo ? 0 : 8) : 4;
-                const t = s('text', { x: plot.x1 - 8, y: y + dy, 'text-anchor': 'end' }, axisG);
+                const t = s('text', { x: plot.x1 - 4, y: y + dy, 'text-anchor': 'end' }, axisG);
                 t.textContent = p.fmt(v, 'axis');
             }
         });
