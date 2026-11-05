@@ -60,10 +60,10 @@ test('the outside axis is only as wide as its labels', () => {
     const { env, c } = homeChart();
     load(c);
     const plotX = () => num(env.root.querySelector('.tschart-plotbg'), 'x');
-    assert.equal(plotX(), 3 * 7 + 10, '"60°" plus gap and margin');
+    assert.equal(plotX(), 3 * 7 + 4, '"60°" plus gap and margin');
     c.setPaneRange('temp', 0, 12000, 3000);
     c.flush();
-    assert.equal(plotX(), 5 * 7 + 10, '"1200°" widens it');
+    assert.equal(plotX(), 5 * 7 + 4, '"1200°" widens it');
 });
 
 test('the open axis gutter fits its labels', () => {
@@ -77,9 +77,9 @@ test('the open axis gutter fits its labels', () => {
     c.setAxisOpen(true);
     c.flush();
     const gutter = env.root.querySelector('.tschart-gutter');
-    assert.equal(num(gutter, 'width'), 3 * 7 + 10, '"60°" plus gap and margin');
+    assert.equal(num(gutter, 'width'), 3 * 7 + 6, '"60°" plus tick, gap and margin');
     const pill = env.root.querySelector('.tschart-pill');
-    assert.equal(parseFloat(pill.style.left), num(gutter, 'x') + 4 + 3 * 7 + 10, 'pill sits past it');
+    assert.equal(parseFloat(pill.style.left), num(gutter, 'x') + 4 + 3 * 7 + 6, 'pill sits past it');
 });
 
 test('relative time labels count back from the window end, oldest first', () => {
@@ -432,8 +432,8 @@ test('the axis follows the stacked totals', () => {
 test('the bar axis is only as wide as its labels and units', () => {
     const { env } = energy();
     const clip = env.root.querySelector('clipPath rect');
-    // Widest is "kWh"/"COP"/"2.9" at 3 characters, plus 8 px gap and 4 px margin.
-    assert.equal(num(clip, 'x'), 3 * 7 + 12);
+    // Widest is "kWh"/"COP"/"2.9" at 3 characters, plus 4 px gap and 1 px margin.
+    assert.equal(num(clip, 'x'), 3 * 7 + 5);
 });
 
 test('the COP line breaks at a day without data', () => {
